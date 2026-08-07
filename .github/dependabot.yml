@@ -1,149 +1,96 @@
 # =============================================================================
-# Dependabot.
+# Dependabot: security fixes only.
 #
-# Grouping is the point. Ungrouped, this repository would produce 20+ PRs a week
-# across five ecosystems and the updates would be ignored, which is worse than
-# not running Dependabot at all. Patch and minor updates are batched into one PR
-# per ecosystem; majors stay separate because they need real review.
+# The full version-update config opened 21 pull requests on the first scan -
+# six of them major bumps (JDK 21 to 24, Node 22 to 26, Python 3.12 to 3.14).
+# That is noise on a teaching repository, and reviewing it competes with the
+# work the repository exists to teach.
 #
-# Security updates ignore these limits and open immediately.
+# Security advisories are NOT affected by this file. GitHub raises those
+# regardless, and those are the ones worth acting on.
+#
+# To turn routine updates back on, change interval from "monthly" to "weekly"
+# and remove the ignore blocks.
 # =============================================================================
 version: 2
 
 updates:
-  # ---------------------------------------------------------------------------
-  # Middleware: Maven
-  # ---------------------------------------------------------------------------
+  # GitHub Actions are pinned by tag, and a stale tag breaks CI loudly rather
+  # than silently, so monthly is enough.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
+    ignore:
+      # A major bump of an action usually changes its inputs
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
   - package-ecosystem: maven
     directory: /middleware
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Asia/Kolkata
-    open-pull-requests-limit: 5
-    labels: [dependencies, java]
+      interval: monthly
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
-      include: scope
     groups:
-      spring:
-        patterns: ["org.springframework*", "io.micrometer:*"]
-        update-types: [minor, patch]
-      aws-sdk:
-        patterns: ["software.amazon.awssdk:*"]
-        update-types: [minor, patch]
-      test-tooling:
-        patterns: ["org.junit*", "org.mockito:*", "org.assertj:*"]
-      minor-and-patch:
+      maven:
         patterns: ["*"]
-        update-types: [minor, patch]
+        update-types: [patch]
     ignore:
-      # The Spring Boot parent dictates the versions of dozens of managed
-      # dependencies. A major bump is a deliberate migration with its own upgrade
-      # notes, not something to merge from a bot PR.
-      - dependency-name: org.springframework.boot:spring-boot-starter-parent
-        update-types: [version-update:semver-major]
+      - dependency-name: "*"
+        update-types: [version-update:semver-major, version-update:semver-minor]
 
-  # ---------------------------------------------------------------------------
-  # AI service: pip
-  # ---------------------------------------------------------------------------
   - package-ecosystem: pip
     directory: /backend
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Asia/Kolkata
-    open-pull-requests-limit: 5
-    labels: [dependencies, python]
+      interval: monthly
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
-      include: scope
     groups:
-      fastapi-stack:
-        patterns: ["fastapi", "uvicorn*", "pydantic*", "starlette"]
-        update-types: [minor, patch]
-      database:
-        patterns: ["SQLAlchemy", "psycopg*"]
-        update-types: [minor, patch]
-      aws:
-        patterns: ["boto3", "botocore", "types-boto3"]
-      dev-tooling:
-        patterns: ["pytest*", "ruff", "mypy", "httpx"]
-      minor-and-patch:
+      pip:
         patterns: ["*"]
-        update-types: [minor, patch]
+        update-types: [patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major, version-update:semver-minor]
 
-  # ---------------------------------------------------------------------------
-  # Frontend: npm
-  # ---------------------------------------------------------------------------
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Asia/Kolkata
-    open-pull-requests-limit: 5
-    labels: [dependencies, javascript]
+      interval: monthly
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
-      include: scope
     groups:
-      react:
-        patterns: ["react", "react-dom", "react-router*", "@types/react*"]
-        update-types: [minor, patch]
-      mui:
-        patterns: ["@mui/*", "@emotion/*"]
-        update-types: [minor, patch]
-      build-tooling:
-        patterns: ["vite", "@vitejs/*", "vitest", "@testing-library/*", "eslint*", "jsdom"]
-      minor-and-patch:
+      npm:
         patterns: ["*"]
-        update-types: [minor, patch]
+        update-types: [patch]
     ignore:
-      # A React major is a migration, not a dependency bump.
-      - dependency-name: react
-        update-types: [version-update:semver-major]
-      - dependency-name: react-dom
-        update-types: [version-update:semver-major]
+      - dependency-name: "*"
+        update-types: [version-update:semver-major, version-update:semver-minor]
 
-  # ---------------------------------------------------------------------------
-  # Container base images
-  # ---------------------------------------------------------------------------
+  # Base images are pinned on purpose. A bump here changes the JDK, Node or
+  # Python the app runs on, so it is a deliberate decision, not a chore.
+  # Trivy in security.yml still fails the build on a fixable CRITICAL, which is
+  # what actually forces a base image forward.
   - package-ecosystem: docker
     directories:
       - /middleware
       - /backend
       - /frontend
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Asia/Kolkata
-    open-pull-requests-limit: 5
-    labels: [dependencies, docker, security]
+      interval: monthly
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "chore(deps)"
-
-  # ---------------------------------------------------------------------------
-  # GitHub Actions
-  #
-  # Worth automating: a pinned action that stops receiving updates is a supply
-  # chain risk, and these PRs are almost always trivial to review.
-  # ---------------------------------------------------------------------------
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Asia/Kolkata
-    open-pull-requests-limit: 5
-    labels: [dependencies, ci]
-    commit-message:
-      prefix: "chore(ci)"
-    groups:
-      actions:
-        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major, version-update:semver-minor]
