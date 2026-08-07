@@ -88,6 +88,7 @@ jobs:
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER"
 
       - name: Deploy
+        id: deploy
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -96,7 +97,27 @@ jobs:
             --set imageRegistry="$REGISTRY" \
             --set imageTag="$SHA" \
             --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-ai-service" \
-            --wait --timeout 5m
+            # atomic = wait, and roll back automatically if the pods never
+            # become ready. Without it a failed rollout leaves the broken
+            # release in place and only the workflow turns red.
+            --atomic --timeout 5m
+
+      # --atomic only catches "the pods never became ready". A pod can be
+      # ready and still be broken, so check something the probe does not.
+      - name: Verify
+        run: |
+          # readiness reports the database too, so this proves the pod reached
+          # Secrets Manager over IRSA and connected to RDS.
+          kubectl run verify-ai-$SHA --rm --attach --restart=Never -q             -n "$NAMESPACE" --image=curlimages/curl:latest --             -fsS --max-time 15 http://ai-service:8000/health/readiness -o /dev/null
+
+      # Only when Deploy itself succeeded. If --atomic failed it has already
+      # rolled back, and rolling back again would drop a second revision.
+      - name: Roll back
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          echo "::error::Verification failed after a successful rollout - rolling back"
+          helm rollback ai-service -n "$NAMESPACE" --wait --timeout 5m
+          kubectl get pods -n "$NAMESPACE" -l app=ai-service
 
       - name: Show what is running
         run: kubectl get pods -n "$NAMESPACE" -l app=ai-service

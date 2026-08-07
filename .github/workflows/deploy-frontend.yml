@@ -86,6 +86,7 @@ jobs:
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER"
 
       - name: Deploy
+        id: deploy
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -93,7 +94,27 @@ jobs:
             --namespace "$NAMESPACE" \
             --set imageRegistry="$REGISTRY" \
             --set imageTag="$SHA" \
-            --wait --timeout 5m
+            # atomic = wait, and roll back automatically if the pods never
+            # become ready. Without it a failed rollout leaves the broken
+            # release in place and only the workflow turns red.
+            --atomic --timeout 5m
+
+      # --atomic only catches "the pods never became ready". A pod can be
+      # ready and still be broken, so check something the probe does not.
+      - name: Verify
+        run: |
+          # nginx serves the SPA shell, not just /healthz. A pod can pass its
+          # readiness probe and still serve nothing useful.
+          kubectl run verify-fe-$SHA --rm --attach --restart=Never -q             -n "$NAMESPACE" --image=curlimages/curl:latest --             -fsS --max-time 10 http://frontend/ -o /dev/null
+
+      # Only when Deploy itself succeeded. If --atomic failed it has already
+      # rolled back, and rolling back again would drop a second revision.
+      - name: Roll back
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          echo "::error::Verification failed after a successful rollout - rolling back"
+          helm rollback frontend -n "$NAMESPACE" --wait --timeout 5m
+          kubectl get pods -n "$NAMESPACE" -l app=frontend
 
       - name: Show what is running
         run: kubectl get pods -n "$NAMESPACE" -l app=frontend

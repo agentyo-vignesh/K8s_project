@@ -100,6 +100,7 @@ jobs:
       # this first and let it finish before deploying the AI service - Flyway
       # owns those tables.
       - name: Deploy
+        id: deploy
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -108,7 +109,27 @@ jobs:
             --set imageRegistry="$REGISTRY" \
             --set imageTag="$SHA" \
             --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-middleware" \
-            --wait --timeout 8m
+            # atomic = wait, and roll back automatically if the pods never
+            # become ready. Without it a failed rollout leaves the broken
+            # release in place and only the workflow turns red.
+            --atomic --timeout 8m
+
+      # --atomic only catches "the pods never became ready". A pod can be
+      # ready and still be broken, so check something the probe does not.
+      - name: Verify
+        run: |
+          # Log in for real. This exercises the database, the JWT key and the
+          # Secrets Manager read - none of which the readiness probe covers.
+          kubectl run verify-mw-$SHA --rm --attach --restart=Never -q             -n "$NAMESPACE" --image=curlimages/curl:latest --             -fsS --max-time 15 -X POST http://middleware:8080/api/v1/auth/login             -H 'Content-Type: application/json'             -d '{"email":"admin@aiinterview.local","password":"Admin@12345"}'             -o /dev/null
+
+      # Only when Deploy itself succeeded. If --atomic failed it has already
+      # rolled back, and rolling back again would drop a second revision.
+      - name: Roll back
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          echo "::error::Verification failed after a successful rollout - rolling back"
+          helm rollback middleware -n "$NAMESPACE" --wait --timeout 5m
+          kubectl get pods -n "$NAMESPACE" -l app=middleware
 
       - name: Show what is running
         run: kubectl get pods -n "$NAMESPACE" -l app=middleware
