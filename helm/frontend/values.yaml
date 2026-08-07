@@ -1,0 +1,8 @@
+# Where the image lives
+imageRegistry: ""
+imageTag: v1
+
+replicas: 1
+
+# Empty = call the API on the same host
+apiBaseUrl: ""

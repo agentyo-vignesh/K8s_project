@@ -1,0 +1,174 @@
+# =============================================================================
+# Production overlay (Amazon EKS).
+#
+#   helm upgrade --install ai-interview ./helm/ai-interview-platform \
+#     -n ai-interview-prod --create-namespace \
+#     -f ./helm/ai-interview-platform/values-prod.yaml \
+#     --set global.imageRegistry=<account>.dkr.ecr.<region>.amazonaws.com \
+#     --set middleware.serviceAccount.roleArn=<middleware-irsa-role-arn> \
+#     --set aiService.serviceAccount.roleArn=<ai-service-irsa-role-arn> \
+#     --set middleware.storage.s3.bucket=<resume-bucket> \
+#     --set ingress.host=<hostname> \
+#     --set ingress.certificateArn=<acm-arn>
+#
+# The placeholders above are intentionally NOT hardcoded here: account ids, role
+# ARNs and hostnames differ per environment, and committing them invites the
+# wrong one to be used. Terraform outputs supply every value (see terraform/).
+#
+# What changes versus dev:
+#   * RDS instead of an in-cluster StatefulSet
+#   * AWS Secrets Manager via IRSA instead of a Kubernetes Secret
+#   * S3 instead of a PVC, which is what allows more than one middleware replica
+#   * HPA on, PDBs on, ServiceMonitors on, Swagger UI off
+# =============================================================================
+
+environment: prod
+
+# No database in the cluster. `postgresql.external` is left empty because with
+# Secrets Manager enabled the host, port and database name all come from the
+# secret payload, so they cannot be resolved from two sources and disagree.
+postgresql:
+  enabled: false
+  external:
+    sslMode: require
+
+# Nothing sensitive is rendered into a manifest. The pods fetch credentials at
+# runtime with their IRSA role, so `helm get manifest` reveals no secret and
+# ArgoCD never stores one.
+secrets:
+  create: false
+
+aws:
+  region: ap-south-1
+  irsa:
+    enabled: true
+  secretsManager:
+    enabled: true
+    databaseSecretId: "ai-interview/prod/database"
+    applicationSecretId: "ai-interview/prod/application"
+
+frontend:
+  replicaCount: 3
+  apiBaseUrl: ""
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
+middleware:
+  replicaCount: 3
+  serviceAccount:
+    create: true
+    # roleArn must be supplied at install time; without it IRSA is not wired and
+    # the pod cannot read Secrets Manager, so it will fail its startup probe.
+    roleArn: ""
+  config:
+    logLevelRoot: WARN
+    logLevelApp: INFO
+    # Interactive docs are a developer tool, not a production endpoint.
+    swaggerUiEnabled: false
+    corsAllowedOrigins: "https://ai-interview.example.com"
+    dbPoolMaxSize: 20
+    dbPoolMinIdle: 5
+    aiServiceMaxAttempts: 2
+    flywayEnabled: true
+  storage:
+    # S3, not a PVC. A ReadWriteOnce volume would cap the deployment at one
+    # replica and make every resume a single point of failure.
+    type: s3
+    s3:
+      bucket: ""
+      prefix: resumes
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  # Deliberately no CPU limit: CFS throttling on a JVM causes latency spikes far
+  # worse than the noisy-neighbour risk the limit would mitigate. The request
+  # guarantees the share; the HPA handles growth.
+
+aiService:
+  replicaCount: 3
+  serviceAccount:
+    create: true
+    roleArn: ""
+  config:
+    logLevel: INFO
+    aiProvider: openai
+    openaiModel: gpt-4o-mini
+    openaiTimeoutSeconds: 30
+    openaiMaxRetries: 1
+    dbPoolSize: 10
+    dbMaxOverflow: 5
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=60
+    alb.ingress.kubernetes.io/tags: Environment=prod,Application=ai-interview-platform
+  host: ai-interview.example.com
+  tls:
+    enabled: true
+  certificateArn: ""
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      # Must match the Prometheus instance's serviceMonitorSelector; the
+      # kube-prometheus-stack default is its own release name.
+      release: kube-prometheus-stack
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+networkPolicy:
+  # Requires a CNI that enforces NetworkPolicy. The EKS VPC CNI needs its
+  # network-policy agent enabled; otherwise these objects are silently inert.
+  enabled: true
+
+terminationGracePeriodSeconds: 60

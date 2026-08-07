@@ -1,0 +1,29 @@
+# =============================================================================
+# AI service runtime dependencies.
+# Pinned exactly so an image rebuilt six months from now is the image that was
+# tested. Dependabot proposes the upgrades; CI decides whether they land.
+# =============================================================================
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+
+# Persistence. psycopg 3 is the current driver; SQLAlchemy 2.x style only.
+SQLAlchemy==2.0.36
+psycopg[binary]==3.2.3
+
+# AWS Secrets Manager. Credentials always come from the default provider chain,
+# which resolves IRSA in-cluster, so no access keys are involved.
+boto3==1.35.81
+
+# OpenAI SDK. Only imported when AI_PROVIDER=openai; the mock provider needs no
+# network access at all.
+openai==1.58.1
+
+# Prometheus exposition for /metrics.
+prometheus-client==0.21.1
+
+# Multipart is not used by this service, but starlette needs it for TestClient
+# form handling in the test suite.
+python-multipart==0.0.20

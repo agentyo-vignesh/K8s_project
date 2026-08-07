@@ -1,0 +1,65 @@
+# Build the frontend image, push it to ECR, deploy it with Helm.
+name: Deploy frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "helm/frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  CLUSTER: ai-interview
+  NAMESPACE: ai-interview
+
+permissions:
+  contents: read
+  # Required for OIDC - GitHub sends AWS a signed token instead of an access key
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tagged with the commit sha, so every deploy is traceable to one commit
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/ai-interview-platform/frontend:${{ github.sha }}"
+          docker build -t "$IMAGE" ./frontend
+          docker push "$IMAGE"
+
+      # The deploy role needs an EKS access entry, or this fails with
+      # "You must be logged in to the server"
+      - name: Get cluster credentials
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER"
+
+      - name: Deploy
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          helm upgrade --install frontend ./helm/frontend \
+            --namespace "$NAMESPACE" \
+            --set imageRegistry="$REGISTRY" \
+            --set imageTag="${{ github.sha }}" \
+            --wait --timeout 5m
+
+      - name: Show what is running
+        run: kubectl get pods -n "$NAMESPACE" -l app=frontend

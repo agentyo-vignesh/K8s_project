@@ -1,0 +1,382 @@
+# =============================================================================
+# Default values for the AI Interview Platform.
+#
+# These defaults target a development cluster: in-cluster PostgreSQL, secrets
+# from a Kubernetes Secret, storage on a PVC. values-prod.yaml overrides that to
+# RDS, AWS Secrets Manager via IRSA, and S3.
+#
+# Everything the requirements call for is externalised here: images, replica
+# counts, resources, secrets, ConfigMaps, Ingress, HPA, database, services,
+# ports and environment variables.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Global
+# -----------------------------------------------------------------------------
+global:
+  # Prefixed to every image repository. Set once to your ECR registry:
+  #   <account>.dkr.ecr.<region>.amazonaws.com
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Applied to every pod. `dev`, `staging` or `prod`; drives Spring profile and APP_ENV.
+environment: dev
+
+# -----------------------------------------------------------------------------
+# AWS integration
+#
+# There is no access key anywhere in this chart, by design. Both services use
+# the AWS SDK default credential provider chain, which resolves the projected
+# web-identity token when the ServiceAccount carries the IRSA annotation below.
+# -----------------------------------------------------------------------------
+aws:
+  region: ap-south-1
+  irsa:
+    # Set to true and supply roleArn per component to switch on IRSA.
+    enabled: false
+  secretsManager:
+    # When true, services read credentials from Secrets Manager instead of env vars.
+    enabled: false
+    databaseSecretId: ""
+    applicationSecretId: ""
+
+# -----------------------------------------------------------------------------
+# Secrets
+#
+# `create: true` renders a Kubernetes Secret from the values below. That is
+# acceptable for a dev cluster and unacceptable for production, where
+# aws.secretsManager.enabled=true means the pods fetch credentials at runtime and
+# nothing sensitive is ever rendered into a manifest or stored in Git.
+#
+# `existingSecret` uses a Secret you manage yourself (sealed-secrets,
+# External Secrets Operator, or kubectl).
+# -----------------------------------------------------------------------------
+secrets:
+  create: true
+  existingSecret: ""
+  data:
+    dbPassword: "change-me-in-every-environment"
+    # Must be at least 32 bytes for HS256. Generate: openssl rand -base64 48
+    jwtSigningKey: "dev-only-signing-key-replace-with-48-random-bytes-please"
+    aiServiceApiKey: "dev-only-internal-api-key"
+    openaiApiKey: ""
+
+# -----------------------------------------------------------------------------
+# Database
+#
+# postgresql.enabled deploys a single-replica StatefulSet for dev. It is not a
+# production database: no replication, no backups, no failover. Production sets
+# enabled=false and points `external` at RDS.
+# -----------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16.4-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    database: ai_interview
+    username: ai_interview_app
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+  external:
+    # Used when postgresql.enabled=false. With Secrets Manager enabled these are
+    # ignored: host, port and database name all come from the secret payload, so
+    # the parts can never be resolved from two different sources.
+    host: ""
+    port: 5432
+    database: ai_interview
+    username: ai_interview_app
+    sslMode: require
+
+# -----------------------------------------------------------------------------
+# Frontend
+# -----------------------------------------------------------------------------
+frontend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-interview-platform/frontend
+    tag: ""              # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 3000
+  containerPort: 3000
+
+  # Injected into the browser at container start. Empty means same-origin, which
+  # is correct when the Ingress routes /api to the middleware on the same host.
+  apiBaseUrl: ""
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 192Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
+# Middleware (Spring Boot)
+# -----------------------------------------------------------------------------
+middleware:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-interview-platform/middleware
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  containerPort: 8080
+
+  serviceAccount:
+    create: true
+    name: ""
+    # arn:aws:iam::<account>:role/<role> — the only thing IRSA needs.
+    roleArn: ""
+    annotations: {}
+
+  # JVM heap is a percentage of the *container* limit, so raising resources.limits.memory
+  # raises the heap without editing this string.
+  javaToolOptions: "-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError"
+
+  config:
+    logLevelRoot: INFO
+    logLevelApp: INFO
+    corsAllowedOrigins: "http://localhost:3000"
+    swaggerUiEnabled: false
+    jwtAccessTokenTtl: PT30M
+    jwtRefreshTokenTtl: PT8H
+    dbPoolMaxSize: 10
+    dbPoolMinIdle: 2
+    aiServiceMaxAttempts: 2
+    flywayEnabled: true
+
+  storage:
+    # `local` requires the PVC below; `s3` requires IRSA and a bucket.
+    type: local
+    s3:
+      bucket: ""
+      prefix: resumes
+    local:
+      path: /var/lib/ai-interview/resumes
+      persistence:
+        enabled: true
+        size: 5Gi
+        storageClass: ""
+        # ReadWriteOnce means replicas cannot share the volume, so replicaCount is
+        # forced to 1 when local storage is used. This is exactly why production
+        # uses S3.
+        accessMode: ReadWriteOnce
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+  # Startup is generous because Flyway migrations run before the app is ready;
+  # liveness stays tight afterwards. failureThreshold x periodSeconds = 150s budget.
+  probes:
+    startup:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      failureThreshold: 30
+    liveness:
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
+# AI service (FastAPI)
+# -----------------------------------------------------------------------------
+aiService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-interview-platform/ai-service
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+  containerPort: 8000
+
+  serviceAccount:
+    create: true
+    name: ""
+    roleArn: ""
+    annotations: {}
+
+  config:
+    logLevel: INFO
+    # `mock` generates deterministic questions with no network call and no spend.
+    # `openai` requires secrets.data.openaiApiKey (or the Secrets Manager payload).
+    aiProvider: mock
+    openaiModel: gpt-4o-mini
+    openaiTimeoutSeconds: 30
+    openaiMaxRetries: 1
+    maxQuestionsPerRequest: 20
+    dbPoolSize: 5
+    dbMaxOverflow: 5
+    dbStatementTimeoutMs: 15000
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  probes:
+    startup:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 20
+    liveness:
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  extraEnv: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
+# Ingress
+#
+# Single host, path-routed: /api and /actuator to the middleware, everything else
+# to the frontend. Same-origin means the browser needs no CORS preflight and
+# frontend.apiBaseUrl can stay empty.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+  host: ai-interview.example.com
+  tls:
+    enabled: false
+    secretName: ""
+  # Certificate ARN for the AWS Load Balancer Controller.
+  certificateArn: ""
+
+# -----------------------------------------------------------------------------
+# Observability
+# -----------------------------------------------------------------------------
+metrics:
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs.
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+
+# -----------------------------------------------------------------------------
+# Security
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
+
+networkPolicy:
+  # Default-deny ingress with explicit allows. Off by default because it needs a
+  # CNI that enforces NetworkPolicy (Calico, Cilium); the EKS VPC CNI does not.
+  enabled: false
+
+# Drained before the pod is killed. Must exceed the middleware's
+# spring.lifecycle.timeout-per-shutdown-phase (30s).
+terminationGracePeriodSeconds: 45
+
+commonLabels: {}
+commonAnnotations: {}

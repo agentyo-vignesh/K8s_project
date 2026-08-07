@@ -1,0 +1,9 @@
+# Plain settings. Nothing secret goes in a ConfigMap - anyone who can read the
+# namespace can read this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+data:
+  API_BASE_URL: "{{ .Values.apiBaseUrl }}"
+  APP_ENV: prod

@@ -1,0 +1,194 @@
+# =============================================================================
+# Security scanning.
+#
+# Runs on pull requests, on pushes to the default branch, and nightly. The
+# nightly run matters: a dependency you shipped last week can become a known CVE
+# tomorrow without anyone touching the repository.
+#
+# Findings are uploaded as SARIF so they appear in the GitHub Security tab with
+# inline annotations rather than only in a log nobody reads.
+# =============================================================================
+name: Security
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  schedule:
+    # 02:30 UTC daily.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Secret detection.
+  # ---------------------------------------------------------------------------
+  gitleaks:
+    name: GitLeaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret committed and later removed is still in the
+          # history and still compromised, so a shallow clone would miss it.
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  # ---------------------------------------------------------------------------
+  # Filesystem scan: dependency CVEs, IaC misconfiguration, hardcoded secrets.
+  # ---------------------------------------------------------------------------
+  trivy-filesystem:
+    name: Trivy (filesystem)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan repository
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-fs.sarif
+          # Report but do not block here; the image scan below is the gate. A
+          # transitive HIGH in a build-only dependency should not stop a hotfix.
+          exit-code: '0'
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-filesystem
+
+  # ---------------------------------------------------------------------------
+  # Container image scan.
+  #
+  # Builds each image and scans it, so a CVE in a base image is caught before it
+  # reaches ECR rather than after deployment.
+  # ---------------------------------------------------------------------------
+  trivy-images:
+    name: Trivy (image - ${{ matrix.component }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: middleware
+            context: middleware
+          - component: ai-service
+            context: backend
+          - component: frontend
+            context: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          load: true
+          tags: scan-target:${{ matrix.component }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: scan-target:${{ matrix.component }}
+          severity: CRITICAL,HIGH
+          # Only OS and language packages that have a fix available. An
+          # unfixable CVE in a base image cannot be actioned by this repository,
+          # and failing on it would train people to ignore the gate.
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-${{ matrix.component }}.sarif
+          exit-code: '0'
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.component }}.sarif
+          category: trivy-image-${{ matrix.component }}
+
+      # Second pass that actually fails the build on a fixable CRITICAL.
+      - name: Fail on fixable CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: scan-target:${{ matrix.component }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+
+  # ---------------------------------------------------------------------------
+  # Static analysis of the application code itself.
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin
+            build-mode: manual
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - name: Build (Java)
+        if: matrix.language == 'java-kotlin'
+        working-directory: middleware
+        run: mvn -B -ntp clean compile -DskipTests
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}

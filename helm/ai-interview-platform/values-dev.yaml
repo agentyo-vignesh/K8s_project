@@ -1,0 +1,121 @@
+# =============================================================================
+# Development overlay.
+#
+#   helm upgrade --install ai-interview ./helm/ai-interview-platform \
+#     -n ai-interview-dev --create-namespace \
+#     -f ./helm/ai-interview-platform/values-dev.yaml
+#
+# Optimised for a small cluster and fast feedback: in-cluster database, one
+# replica per service, verbose logs, Swagger UI on, mock AI provider (no spend).
+# =============================================================================
+
+environment: dev
+
+# In-cluster PostgreSQL is fine here: losing this data costs nothing.
+postgresql:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+# Credentials from a Kubernetes Secret. Replace these before using this overlay
+# on any cluster other than your own.
+secrets:
+  create: true
+  data:
+    dbPassword: "dev-only-password-change-me"
+    jwtSigningKey: "dev-only-signing-key-replace-with-48-random-bytes-please"
+    aiServiceApiKey: "dev-only-internal-api-key"
+
+aws:
+  irsa:
+    enabled: false
+  secretsManager:
+    enabled: false
+
+frontend:
+  replicaCount: 1
+  # Empty: the Ingress serves the UI and /api from one host, so the browser talks
+  # to its own origin.
+  apiBaseUrl: ""
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  resources:
+    requests:
+      cpu: 10m
+      memory: 48Mi
+    limits:
+      memory: 128Mi
+
+middleware:
+  # One replica because local storage uses a ReadWriteOnce volume.
+  replicaCount: 1
+  config:
+    logLevelRoot: INFO
+    logLevelApp: DEBUG
+    swaggerUiEnabled: true
+    corsAllowedOrigins: "http://localhost:3000,http://localhost:5173"
+    dbPoolMaxSize: 5
+    dbPoolMinIdle: 1
+  storage:
+    type: local
+    local:
+      persistence:
+        enabled: true
+        size: 2Gi
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      memory: 768Mi
+
+aiService:
+  replicaCount: 1
+  config:
+    logLevel: DEBUG
+    # Deterministic, offline, free. Switch to openai only when demonstrating the
+    # real provider.
+    aiProvider: mock
+    dbPoolSize: 3
+    dbMaxOverflow: 2
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      memory: 384Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "12m"
+  host: ai-interview.dev.local
+  tls:
+    enabled: false
+
+metrics:
+  serviceMonitor:
+    enabled: false
+  prometheusRule:
+    enabled: false
+
+networkPolicy:
+  enabled: false

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ai-service
+description: FastAPI question generation. Adds a shared Secret reference and a database connection.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

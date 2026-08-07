@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AI Interview Platform" />
+    <meta name="theme-color" content="#0b3d91" />
+    <title>AI Interview Platform</title>
+
+    <!--
+      Runtime configuration. Rendered by docker-entrypoint.sh from environment variables at
+      container start, so the same image runs in every environment. The inline fallback below keeps
+      `npm run dev` working, where the Vite proxy handles /api.
+    -->
+    <script>
+      window.__APP_CONFIG__ = window.__APP_CONFIG__ || { apiBaseUrl: '', appEnv: 'dev' };
+    </script>
+    <script src="/runtime-config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

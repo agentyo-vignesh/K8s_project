@@ -1,0 +1,139 @@
+{{- if .Values.aiService.enabled }}
+{{- $component := "ai-service" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aip.componentName" (dict "root" . "component" $component) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  {{- if not .Values.aiService.autoscaling.enabled }}
+  replicas: {{ .Values.aiService.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "aip.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aip.componentLabels" (dict "root" . "component" $component) | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and .Values.secrets.create (not .Values.secrets.existingSecret) }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "aip.aiServiceAccountName" . }}
+      {{- include "aip.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: ai-service
+          image: {{ include "aip.image" (dict "root" . "image" .Values.aiService.image) }}
+          imagePullPolicy: {{ .Values.aiService.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.aiService.containerPort }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ printf "%s-ai-service-config" (include "aip.fullname" .) }}
+          {{- /*
+            With Secrets Manager enabled the pod reads every credential at
+            runtime through IRSA, so there is nothing left to inject here. The
+            guard keeps `env:` from rendering as an empty key, which serialises
+            to null and is rejected by stricter admission and schema validators.
+          */}}
+          {{- if or (not .Values.aws.secretsManager.enabled) .Values.aiService.extraEnv }}
+          env:
+            {{- if not .Values.aws.secretsManager.enabled }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aip.secretName" . }}
+                  key: DB_PASSWORD
+            - name: INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aip.secretName" . }}
+                  key: AI_SERVICE_API_KEY
+            {{- if eq .Values.aiService.config.aiProvider "openai" }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aip.secretName" . }}
+                  key: OPENAI_API_KEY
+            {{- end }}
+            {{- end }}
+            {{- with .Values.aiService.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- /*
+            Liveness hits /health/liveness, which never touches the database. A
+            database blip must not restart every pod: readiness already removes
+            them from the Service, and they recover on their own once it returns.
+          */}}
+          startupProbe:
+            httpGet:
+              path: /health/liveness
+              port: http
+            initialDelaySeconds: {{ .Values.aiService.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.aiService.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.aiService.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: http
+            periodSeconds: {{ .Values.aiService.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.aiService.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.aiService.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
+            periodSeconds: {{ .Values.aiService.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.aiService.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.aiService.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.aiService.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.aiService.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.aiService.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.aiService.affinity }}
+      affinity:
+        {{- toYaml .Values.aiService.affinity | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "aip.selectorLabels" (dict "root" . "component" $component) | nindent 20 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: ai-service
+  template:
+    metadata:
+      labels:
+        app: ai-service
+      annotations:
+        # Restart the pod when the ConfigMap changes. Without this the pod keeps
+        # running with the old values after a helm upgrade.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      # This is what gives the pod its AWS identity
+      serviceAccountName: ai-service
+
+      containers:
+        - name: ai-service
+          image: {{ .Values.imageRegistry }}/ai-interview-platform/ai-service:{{ .Values.imageTag }}
+          ports:
+            - name: http
+              containerPort: 8000
+
+          # Every setting comes from here. Nothing secret is in it.
+          envFrom:
+            - configMapRef:
+                name: ai-service-config
+
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: http
+            initialDelaySeconds: 20
+
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
+            initialDelaySeconds: 10
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service
+spec:
+  selector:
+    app: ai-service
+  ports:
+    - port: 8000
+      targetPort: http

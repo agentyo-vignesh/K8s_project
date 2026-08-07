@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+      annotations:
+        # Editing a ConfigMap does NOT restart pods on its own - the Deployment
+        # has not changed, so Kubernetes leaves it alone and the pod keeps the
+        # old values. This hash changes whenever configmap.yaml changes, which
+        # changes the Deployment, which triggers a restart.
+        # Delete this line, change a value, and watch nothing happen.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: frontend
+          image: {{ .Values.imageRegistry }}/ai-interview-platform/frontend:{{ .Values.imageTag }}
+          ports:
+            - name: http
+              containerPort: 3000
+
+          # Load every key from the ConfigMap as an environment variable
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+
+          # Is the container alive? If not, restart it.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+
+          # Is it ready for traffic? If not, keep it out of the Service.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: http

@@ -1,0 +1,149 @@
+# =============================================================================
+# Dependabot.
+#
+# Grouping is the point. Ungrouped, this repository would produce 20+ PRs a week
+# across five ecosystems and the updates would be ignored, which is worse than
+# not running Dependabot at all. Patch and minor updates are batched into one PR
+# per ecosystem; majors stay separate because they need real review.
+#
+# Security updates ignore these limits and open immediately.
+# =============================================================================
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # Middleware: Maven
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: maven
+    directory: /middleware
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels: [dependencies, java]
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      spring:
+        patterns: ["org.springframework*", "io.micrometer:*"]
+        update-types: [minor, patch]
+      aws-sdk:
+        patterns: ["software.amazon.awssdk:*"]
+        update-types: [minor, patch]
+      test-tooling:
+        patterns: ["org.junit*", "org.mockito:*", "org.assertj:*"]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # The Spring Boot parent dictates the versions of dozens of managed
+      # dependencies. A major bump is a deliberate migration with its own upgrade
+      # notes, not something to merge from a bot PR.
+      - dependency-name: org.springframework.boot:spring-boot-starter-parent
+        update-types: [version-update:semver-major]
+
+  # ---------------------------------------------------------------------------
+  # AI service: pip
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels: [dependencies, python]
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      fastapi-stack:
+        patterns: ["fastapi", "uvicorn*", "pydantic*", "starlette"]
+        update-types: [minor, patch]
+      database:
+        patterns: ["SQLAlchemy", "psycopg*"]
+        update-types: [minor, patch]
+      aws:
+        patterns: ["boto3", "botocore", "types-boto3"]
+      dev-tooling:
+        patterns: ["pytest*", "ruff", "mypy", "httpx"]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # ---------------------------------------------------------------------------
+  # Frontend: npm
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels: [dependencies, javascript]
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    groups:
+      react:
+        patterns: ["react", "react-dom", "react-router*", "@types/react*"]
+        update-types: [minor, patch]
+      mui:
+        patterns: ["@mui/*", "@emotion/*"]
+        update-types: [minor, patch]
+      build-tooling:
+        patterns: ["vite", "@vitejs/*", "vitest", "@testing-library/*", "eslint*", "jsdom"]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # A React major is a migration, not a dependency bump.
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+
+  # ---------------------------------------------------------------------------
+  # Container base images
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: docker
+    directories:
+      - /middleware
+      - /backend
+      - /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, security]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions
+  #
+  # Worth automating: a pinned action that stops receiving updates is a supply
+  # chain risk, and these PRs are almost always trivial to review.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]

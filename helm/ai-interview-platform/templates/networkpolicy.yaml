@@ -1,0 +1,106 @@
+{{/*
+NetworkPolicies: default-deny ingress with explicit allows.
+
+Off by default because the EKS VPC CNI does not enforce NetworkPolicy without the
+network-policy agent enabled; on a cluster where nothing enforces these, applying
+them gives a false sense of isolation. Turn on with Calico, Cilium, or VPC CNI
+network policy support.
+
+The rule that matters: the AI service accepts traffic only from the middleware.
+Nothing else in the namespace, and nothing from the Ingress, can reach it.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-default-deny" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.labels" . | nindent 4 }}
+spec:
+  # Empty selector = every pod in the namespace.
+  podSelector: {}
+  policyTypes:
+    - Ingress
+{{- if .Values.aiService.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aip.componentName" (dict "root" . "component" "ai-service") }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "ai-service") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aip.selectorLabels" (dict "root" . "component" "ai-service") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "aip.selectorLabels" (dict "root" . "component" "middleware") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aiService.containerPort }}
+    # Prometheus scrapes /metrics, so the monitoring namespace needs a way in.
+    # Matches the label kube-prometheus-stack puts on its namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aiService.containerPort }}
+{{- end }}
+{{- if .Values.middleware.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aip.componentName" (dict "root" . "component" "middleware") }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "middleware") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aip.selectorLabels" (dict "root" . "component" "middleware") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # The load balancer controller targets pod IPs directly (target-type: ip), and
+    # that traffic has no pod or namespace identity to match on, so the ingress
+    # controller namespace and an empty-namespace allowance are both required.
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.middleware.containerPort }}
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-postgresql" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "postgresql") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aip.selectorLabels" (dict "root" . "component" "postgresql") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "aip.selectorLabels" (dict "root" . "component" "middleware") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "aip.selectorLabels" (dict "root" . "component" "ai-service") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+{{- end }}

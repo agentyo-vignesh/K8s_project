@@ -1,0 +1,65 @@
+# ---------- Secrets / local environment ----------
+# Configuration is one file per service. The .env.example files ARE committed;
+# the real .env files never are.
+.env
+.env.local
+database/.env
+middleware/.env
+backend/.env
+frontend/.env
+!**/.env.example
+*.pem
+*.key
+!**/testdata/*.key
+
+# Helm values holding real credentials. secrets.yaml.example IS committed.
+helm/secrets.yaml
+!helm/secrets.yaml.example
+
+# ---------- Java / Maven ----------
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties.local
+*.class
+hs_err_pid*
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ---------- Node / frontend ----------
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+pnpm-debug.log*
+
+# ---------- Terraform ----------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# ---------- Runtime data ----------
+data/
+uploads/
+storage/
+logs/
+*.log
+
+# ---------- IDE / OS ----------
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

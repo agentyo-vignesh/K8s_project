@@ -1,0 +1,19 @@
+imageRegistry: ""
+imageTag: v1
+
+# Keep 1. The disk can only attach to one pod at a time.
+replicas: 1
+
+# The pod reads its own secrets from AWS. There is no Kubernetes Secret, and no
+# password is passed to Helm.
+#
+# roleArn comes from: terraform output -raw middleware_role_arn
+aws:
+  roleArn: ""
+  region: ap-south-1
+  databaseSecretId: ai-interview/prod/database
+  applicationSecretId: ai-interview/prod/application
+
+storage:
+  size: 5Gi
+  path: /var/lib/ai-interview/resumes

@@ -1,0 +1,122 @@
+{{/*
+Configuration, one ConfigMap PER SERVICE.
+
+This mirrors the per-service env-file split used for Docker Compose. A single
+shared ConfigMap would put the AI service's OpenAI settings into the middleware
+pod and the middleware's Flyway and JWT settings into the AI service pod, so
+`kubectl exec ... env` would no longer tell you what a service actually reads.
+Splitting them keeps each pod's environment exactly its own.
+
+The database coordinates are the one thing legitimately repeated, because two
+services connect to the same database. They are rendered from the same helper in
+both objects, so they cannot drift the way two hand-edited files can.
+
+Each deployment checksums only its own ConfigMap, so a change to the AI service's
+model setting no longer triggers a pointless middleware rollout.
+*/}}
+{{- if .Values.middleware.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-middleware-config" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "middleware") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  SPRING_PROFILES_ACTIVE: {{ include "aip.springProfile" . | quote }}
+  SERVER_PORT: {{ .Values.middleware.containerPort | quote }}
+  LOG_LEVEL_ROOT: {{ .Values.middleware.config.logLevelRoot | quote }}
+  LOG_LEVEL_APP: {{ .Values.middleware.config.logLevelApp | quote }}
+  APP_CORS_ALLOWED_ORIGINS: {{ .Values.middleware.config.corsAllowedOrigins | quote }}
+  SWAGGER_UI_ENABLED: {{ .Values.middleware.config.swaggerUiEnabled | quote }}
+  JWT_ACCESS_TOKEN_TTL: {{ .Values.middleware.config.jwtAccessTokenTtl | quote }}
+  JWT_REFRESH_TOKEN_TTL: {{ .Values.middleware.config.jwtRefreshTokenTtl | quote }}
+  DB_POOL_MAX_SIZE: {{ .Values.middleware.config.dbPoolMaxSize | quote }}
+  DB_POOL_MIN_IDLE: {{ .Values.middleware.config.dbPoolMinIdle | quote }}
+  FLYWAY_ENABLED: {{ .Values.middleware.config.flywayEnabled | quote }}
+  AI_SERVICE_BASE_URL: {{ printf "http://%s:%v" (include "aip.aiServiceHost" .) .Values.aiService.service.port | quote }}
+  AI_SERVICE_MAX_ATTEMPTS: {{ .Values.middleware.config.aiServiceMaxAttempts | quote }}
+  APP_STORAGE_TYPE: {{ .Values.middleware.storage.type | quote }}
+  {{- if eq .Values.middleware.storage.type "local" }}
+  APP_STORAGE_LOCAL_ROOT: {{ .Values.middleware.storage.local.path | quote }}
+  {{- else }}
+  APP_STORAGE_S3_BUCKET: {{ required "middleware.storage.s3.bucket is required when middleware.storage.type=s3" .Values.middleware.storage.s3.bucket | quote }}
+  APP_STORAGE_S3_PREFIX: {{ .Values.middleware.storage.s3.prefix | quote }}
+  {{- end }}
+  AWS_REGION: {{ .Values.aws.region | quote }}
+  {{- if .Values.aws.secretsManager.enabled }}
+  APP_SECRETS_PROVIDER: "aws"
+  APP_SECRETS_AWS_DATABASE_SECRET_ID: {{ required "aws.secretsManager.databaseSecretId is required when aws.secretsManager.enabled=true" .Values.aws.secretsManager.databaseSecretId | quote }}
+  APP_SECRETS_AWS_APPLICATION_SECRET_ID: {{ required "aws.secretsManager.applicationSecretId is required when aws.secretsManager.enabled=true" .Values.aws.secretsManager.applicationSecretId | quote }}
+  {{- else }}
+  APP_SECRETS_PROVIDER: "env"
+  # Connection coordinates only; the password comes from the Secret.
+  DB_HOST: {{ include "aip.databaseHost" . | quote }}
+  DB_PORT: {{ include "aip.databasePort" . | quote }}
+  DB_NAME: {{ include "aip.databaseName" . | quote }}
+  DB_USERNAME: {{ include "aip.databaseUsername" . | quote }}
+  DB_SSL_MODE: {{ include "aip.databaseSslMode" . | quote }}
+  {{- end }}
+{{- end }}
+{{- if .Values.aiService.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-ai-service-config" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "ai-service") | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  APP_ENV: {{ .Values.environment | quote }}
+  SERVER_PORT: {{ .Values.aiService.containerPort | quote }}
+  LOG_LEVEL: {{ .Values.aiService.config.logLevel | quote }}
+  AI_PROVIDER: {{ .Values.aiService.config.aiProvider | quote }}
+  OPENAI_MODEL: {{ .Values.aiService.config.openaiModel | quote }}
+  OPENAI_TIMEOUT_SECONDS: {{ .Values.aiService.config.openaiTimeoutSeconds | quote }}
+  OPENAI_MAX_RETRIES: {{ .Values.aiService.config.openaiMaxRetries | quote }}
+  MAX_QUESTIONS_PER_REQUEST: {{ .Values.aiService.config.maxQuestionsPerRequest | quote }}
+  DB_POOL_SIZE: {{ .Values.aiService.config.dbPoolSize | quote }}
+  DB_MAX_OVERFLOW: {{ .Values.aiService.config.dbMaxOverflow | quote }}
+  DB_STATEMENT_TIMEOUT_MS: {{ .Values.aiService.config.dbStatementTimeoutMs | quote }}
+  # Flyway in the middleware owns the schema, including this service's tables.
+  CREATE_SCHEMA_ON_STARTUP: "false"
+  AWS_REGION: {{ .Values.aws.region | quote }}
+  {{- if .Values.aws.secretsManager.enabled }}
+  SECRETS_PROVIDER: "aws"
+  AWS_DATABASE_SECRET_ID: {{ required "aws.secretsManager.databaseSecretId is required when aws.secretsManager.enabled=true" .Values.aws.secretsManager.databaseSecretId | quote }}
+  AWS_APPLICATION_SECRET_ID: {{ required "aws.secretsManager.applicationSecretId is required when aws.secretsManager.enabled=true" .Values.aws.secretsManager.applicationSecretId | quote }}
+  {{- else }}
+  SECRETS_PROVIDER: "env"
+  DB_HOST: {{ include "aip.databaseHost" . | quote }}
+  DB_PORT: {{ include "aip.databasePort" . | quote }}
+  DB_NAME: {{ include "aip.databaseName" . | quote }}
+  DB_USERNAME: {{ include "aip.databaseUsername" . | quote }}
+  DB_SSLMODE: {{ include "aip.databaseSslMode" . | quote }}
+  {{- end }}
+{{- end }}
+{{- if .Values.frontend.enabled }}
+---
+{{/*
+Frontend configuration is rendered into JavaScript served to the browser, so
+everything in this object is public by definition. Keeping it separate makes it
+obvious that adding a credential here would publish it to every visitor.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-frontend-config" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "frontend") | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.environment | quote }}
+  # Empty means same-origin: the Ingress routes /api on this host to the
+  # middleware, so the browser needs no cross-origin request and no CORS preflight.
+  API_BASE_URL: {{ .Values.frontend.apiBaseUrl | quote }}
+{{- end }}

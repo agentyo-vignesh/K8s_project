@@ -1,0 +1,145 @@
+{{/*
+In-cluster PostgreSQL for development.
+
+This is a single-replica StatefulSet with no replication, no automated backups
+and no failover. It exists so `helm install` gives a working stack on a laptop or
+a training cluster without provisioning RDS first.
+
+Production sets postgresql.enabled=false and points at RDS, which is what
+values-prod.yaml does. Do not run this StatefulSet with real data.
+*/}}
+{{- if .Values.postgresql.enabled }}
+{{- $component := "postgresql" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-postgresql" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  # Headless: the StatefulSet gets a stable DNS name per pod and no load
+  # balancing, which is what a single-writer database wants.
+  clusterIP: None
+  ports:
+    - name: postgresql
+      port: {{ .Values.postgresql.service.port }}
+      targetPort: postgresql
+      protocol: TCP
+  selector:
+    {{- include "aip.selectorLabels" (dict "root" . "component" $component) | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ printf "%s-postgresql" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" $component) | nindent 4 }}
+spec:
+  serviceName: {{ printf "%s-postgresql" (include "aip.fullname" .) }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aip.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aip.componentLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      securityContext:
+        # The postgres image runs as uid 999, not the platform-wide 10001, so the
+        # shared podSecurityContext does not apply here.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # PostgreSQL writes to its data directory and to run-time temp paths,
+            # so a read-only root filesystem is not workable without more mounts
+            # than this dev-only database justifies.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aip.secretName" . }}
+                  key: DB_PASSWORD
+            # The image refuses to initialise onto a non-empty mount unless the
+            # data lives in a subdirectory; PVCs often contain lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            # initdb needs a writable shared-memory area; the default 64MB /dev/shm
+            # is too small for anything but trivial queries.
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+        {{- if not .Values.postgresql.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.postgresql.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "aip.componentLabels" (dict "root" . "component" $component) | nindent 10 }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,14 @@
+imageRegistry: ""
+imageTag: v1
+
+replicas: 1
+
+# The pod reads its own secrets from AWS. There is no Kubernetes Secret, and no
+# password is passed to Helm.
+#
+# roleArn comes from: terraform output -raw ai_service_role_arn
+aws:
+  roleArn: ""
+  region: ap-south-1
+  databaseSecretId: ai-interview/prod/database
+  applicationSecretId: ai-interview/prod/application

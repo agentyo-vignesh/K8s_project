@@ -1,0 +1,32 @@
+{{/*
+Resume storage volume.
+
+Only created for the `local` storage backend. ReadWriteOnce means a single node
+can mount it for writing, which caps the middleware at one replica and is exactly
+why production uses S3 instead: see values-prod.yaml, where storage.type=s3 and
+this object is not rendered at all.
+*/}}
+{{- if and .Values.middleware.enabled (eq .Values.middleware.storage.type "local") .Values.middleware.storage.local.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "%s-resumes" (include "aip.fullname" .) }}
+  labels:
+    {{- include "aip.componentLabels" (dict "root" . "component" "middleware") | nindent 4 }}
+  annotations:
+    # Kept on an uninstall so resumes are not destroyed by `helm uninstall`.
+    # Delete it deliberately when you actually mean to discard the data.
+    helm.sh/resource-policy: keep
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.middleware.storage.local.persistence.accessMode }}
+  {{- if .Values.middleware.storage.local.persistence.storageClass }}
+  storageClassName: {{ .Values.middleware.storage.local.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.middleware.storage.local.persistence.size }}
+{{- end }}

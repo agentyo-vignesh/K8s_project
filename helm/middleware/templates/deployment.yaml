@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: middleware
+spec:
+  replicas: {{ .Values.replicas }}
+
+  # Stop the old pod before starting the new one.
+  # The disk can only attach to one pod, so a rolling update would hang.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: middleware
+  template:
+    metadata:
+      labels:
+        app: middleware
+      annotations:
+        # Restart the pod when the ConfigMap changes. Without this the pod keeps
+        # running with the old values after a helm upgrade.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      # This is what gives the pod its AWS identity
+      serviceAccountName: middleware
+
+      # The app runs as user 10001, but a new disk belongs to root.
+      # fsGroup hands the disk to 10001 so the app can write to it.
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+
+      containers:
+        - name: middleware
+          image: {{ .Values.imageRegistry }}/ai-interview-platform/middleware:{{ .Values.imageTag }}
+          ports:
+            - name: http
+              containerPort: 8080
+
+          # Every setting comes from here. Nothing secret is in it.
+          envFrom:
+            - configMapRef:
+                name: middleware-config
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 60
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 30
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+
+          # Mount the disk from pvc.yaml
+          volumeMounts:
+            - name: resumes
+              mountPath: {{ .Values.storage.path }}
+
+      volumes:
+        - name: resumes
+          persistentVolumeClaim:
+            claimName: resume-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: middleware
+spec:
+  selector:
+    app: middleware
+  ports:
+    - port: 8080
+      targetPort: http

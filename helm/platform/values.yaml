@@ -1,0 +1,3 @@
+# The only cluster-wide thing the app needs.
+# Secrets are NOT here - each pod reads them from AWS itself.
+createStorageClass: true

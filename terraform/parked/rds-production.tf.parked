@@ -1,0 +1,256 @@
+# # =============================================================================
+# # PostgreSQL on RDS, plus the Secrets Manager secrets the application reads.
+# #
+# # The master password is generated here and written straight to Secrets Manager.
+# # It is never a Terraform variable, never in a tfvars file, and never printed by
+# # an output. It does land in Terraform state, which is why the S3 backend is
+# # encrypted and access-controlled.
+# # =============================================================================
+
+# resource "random_password" "db" {
+#   length  = 32
+#   special = true
+#   # RDS rejects these in a master password, and `/` and `@` would also need
+#   # escaping in a connection URL.
+#   override_special = "!#$%&*()-_=+[]{}<>:?"
+# }
+
+# resource "random_password" "jwt_signing_key" {
+#   # 64 bytes, comfortably above the 32-byte minimum HS256 requires. Alphanumeric
+#   # only so it survives any transport (env var, JSON, YAML) without escaping.
+#   length  = 64
+#   special = false
+# }
+
+# resource "random_password" "ai_service_api_key" {
+#   length  = 48
+#   special = false
+# }
+
+# # -----------------------------------------------------------------------------
+# # Security group: PostgreSQL reachable only from the cluster's nodes.
+# # -----------------------------------------------------------------------------
+# resource "aws_security_group" "database" {
+#   name        = "${local.name_prefix}-rds"
+#   description = "PostgreSQL access from the EKS node group only"
+#   vpc_id      = module.vpc.vpc_id
+
+#   tags = merge(local.common_tags, { Name = "${local.name_prefix}-rds" })
+
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+# }
+
+# # A security-group reference rather than a CIDR: node IPs change constantly as
+# # the group scales, and a CIDR rule would either be too broad or immediately stale.
+# resource "aws_vpc_security_group_ingress_rule" "database_from_nodes" {
+#   security_group_id            = aws_security_group.database.id
+#   description                  = "PostgreSQL from EKS nodes"
+#   referenced_security_group_id = module.eks.node_security_group_id
+#   from_port                    = 5432
+#   to_port                      = 5432
+#   ip_protocol                  = "tcp"
+
+#   tags = local.common_tags
+# }
+
+# # No egress rule. RDS initiates no outbound connections, so it gets none.
+
+# # -----------------------------------------------------------------------------
+# # Parameter group.
+# #
+# # Explicit rather than default so logging behaviour is deliberate and versioned.
+# # -----------------------------------------------------------------------------
+# resource "aws_db_parameter_group" "main" {
+#   name_prefix = "${local.name_prefix}-pg16-"
+#   family      = "postgres16"
+#   description = "AI Interview Platform PostgreSQL 16 parameters"
+
+#   # Log any statement slower than a second: enough to find the query behind a
+#   # latency alert, quiet enough not to fill the log with healthy traffic.
+#   parameter {
+#     name  = "log_min_duration_statement"
+#     value = "1000"
+#   }
+
+#   parameter {
+#     name  = "log_connections"
+#     value = "1"
+#   }
+
+#   parameter {
+#     name  = "log_disconnections"
+#     value = "1"
+#   }
+
+#   # A session that holds a transaction open indefinitely blocks vacuum and can
+#   # exhaust connections; kill it after five minutes.
+#   parameter {
+#     name  = "idle_in_transaction_session_timeout"
+#     value = "300000"
+#   }
+
+#   # Enables pg_stat_statements, which is the difference between "the database is
+#   # slow" and "this query is slow".
+#   parameter {
+#     name         = "shared_preload_libraries"
+#     value        = "pg_stat_statements"
+#     apply_method = "pending-reboot"
+#   }
+
+#   tags = local.common_tags
+
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+# }
+
+# # -----------------------------------------------------------------------------
+# # The database
+# # -----------------------------------------------------------------------------
+# resource "aws_db_instance" "main" {
+#   identifier = "${local.name_prefix}-postgres"
+
+#   engine         = "postgres"
+#   engine_version = var.db_engine_version
+#   instance_class = var.db_instance_class
+
+#   db_name  = var.db_name
+#   username = var.db_username
+#   password = random_password.db.result
+#   port     = 5432
+
+#   allocated_storage = var.db_allocated_storage
+#   # Storage autoscaling: running out of disk takes the database down hard, and
+#   # the headroom costs nothing until it is used.
+#   max_allocated_storage = var.db_max_allocated_storage
+#   storage_type          = "gp3"
+#   storage_encrypted     = true
+
+#   db_subnet_group_name   = module.vpc.database_subnet_group_name
+#   vpc_security_group_ids = [aws_security_group.database.id]
+#   # Not publicly accessible, and in subnets with no internet route either.
+#   publicly_accessible = false
+#   multi_az            = var.db_multi_az
+
+#   parameter_group_name = aws_db_parameter_group.main.name
+
+#   backup_retention_period = var.db_backup_retention_days
+#   # UTC windows chosen to avoid Indian business hours.
+#   backup_window         = "18:00-19:00"
+#   maintenance_window    = "Sun:19:30-Sun:20:30"
+#   copy_tags_to_snapshot = true
+
+#   auto_minor_version_upgrade = true
+#   apply_immediately          = var.environment != "prod"
+
+#   deletion_protection = var.db_deletion_protection
+#   # A final snapshot is the last line of defence against an accidental destroy.
+#   skip_final_snapshot       = var.environment != "prod"
+#   final_snapshot_identifier = var.environment == "prod" ? "${local.name_prefix}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}" : null
+
+#   performance_insights_enabled          = true
+#   performance_insights_retention_period = 7
+#   enabled_cloudwatch_logs_exports       = ["postgresql", "upgrade"]
+#   monitoring_interval                   = 60
+#   monitoring_role_arn                   = aws_iam_role.rds_monitoring.arn
+
+#   tags = merge(local.common_tags, { Name = "${local.name_prefix}-postgres" })
+
+#   lifecycle {
+#     ignore_changes = [
+#       # Recomputed from timestamp() on every plan, which would otherwise show a
+#       # permanent diff.
+#       final_snapshot_identifier,
+#       # If the password is rotated in Secrets Manager, Terraform must not revert it.
+#       password,
+#     ]
+#   }
+# }
+
+# resource "aws_iam_role" "rds_monitoring" {
+#   name = "${local.name_prefix}-rds-monitoring"
+
+#   assume_role_policy = jsonencode({
+#     Version = "2012-10-17"
+#     Statement = [{
+#       Effect    = "Allow"
+#       Principal = { Service = "monitoring.rds.amazonaws.com" }
+#       Action    = "sts:AssumeRole"
+#     }]
+#   })
+
+#   tags = local.common_tags
+# }
+
+# resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+#   role       = aws_iam_role.rds_monitoring.name
+#   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+# }
+
+# # =============================================================================
+# # Secrets Manager
+# #
+# # Two secrets, matching what the application expects:
+# #
+# #   <prefix>/database     RDS-rotation JSON shape, read by both services
+# #   <prefix>/application  jwtSigningKey and aiServiceApiKey
+# #
+# # The database secret's field names deliberately match what RDS-managed rotation
+# # writes, so switching to managed rotation later needs no application change.
+# # =============================================================================
+
+# resource "aws_secretsmanager_secret" "database" {
+#   name        = "${var.project_name}/${var.environment}/database"
+#   description = "PostgreSQL connection details for the AI Interview Platform"
+
+#   # Zero in non-prod so a `terraform destroy` followed by an apply does not
+#   # collide with a secret still in the 30-day recovery window.
+#   recovery_window_in_days = var.environment == "prod" ? 30 : 0
+
+#   tags = local.common_tags
+# }
+
+# resource "aws_secretsmanager_secret_version" "database" {
+#   secret_id = aws_secretsmanager_secret.database.id
+
+#   secret_string = jsonencode({
+#     engine   = "postgres"
+#     host     = aws_db_instance.main.address
+#     port     = aws_db_instance.main.port
+#     dbname   = aws_db_instance.main.db_name
+#     username = aws_db_instance.main.username
+#     password = random_password.db.result
+#   })
+
+#   lifecycle {
+#     # Rotation (managed or manual) updates this value outside Terraform.
+#     ignore_changes = [secret_string]
+#   }
+# }
+
+# resource "aws_secretsmanager_secret" "application" {
+#   name        = "${var.project_name}/${var.environment}/application"
+#   description = "JWT signing key and internal service API key"
+
+#   recovery_window_in_days = var.environment == "prod" ? 30 : 0
+
+#   tags = local.common_tags
+# }
+
+# resource "aws_secretsmanager_secret_version" "application" {
+#   secret_id = aws_secretsmanager_secret.application.id
+
+#   secret_string = jsonencode({
+#     jwtSigningKey   = random_password.jwt_signing_key.result
+#     aiServiceApiKey = random_password.ai_service_api_key.result
+#     # Populated out of band: an OpenAI key is not something Terraform can mint.
+#     # Set it with `aws secretsmanager put-secret-value` after the first apply.
+#     openaiApiKey = ""
+#   })
+
+#   lifecycle {
+#     ignore_changes = [secret_string]
+#   }
+# }

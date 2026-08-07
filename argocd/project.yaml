@@ -1,0 +1,95 @@
+# =============================================================================
+# ArgoCD AppProject.
+#
+# A project is a security boundary, not an organisational label. It restricts
+# which repositories an Application may deploy from, which clusters and
+# namespaces it may write to, and which resource kinds it may create.
+#
+# Without one, every Application runs with ArgoCD's full cluster permissions, so
+# a compromised or mistaken manifest could create a ClusterRoleBinding.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ai-interview-platform
+  namespace: argocd
+  finalizers:
+    # Ensures child Applications are removed before the project itself, rather
+    # than being orphaned.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: AI Interview Platform - frontend, middleware and AI service
+
+  # Only this repository. A wildcard here would let any Application in the
+  # project deploy arbitrary charts from anywhere.
+  sourceRepos:
+    - https://github.com/your-org/ai-interview-platform.git
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: ai-interview-dev
+    - server: https://kubernetes.default.svc
+      namespace: ai-interview-staging
+    - server: https://kubernetes.default.svc
+      namespace: ai-interview-prod
+
+  # This application needs no cluster-scoped resources at all. Leaving the list
+  # empty means an Application cannot create a ClusterRole, a CRD, or a
+  # ValidatingWebhookConfiguration even if a manifest asks for one.
+  clusterResourceWhitelist: []
+
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: ''
+      kind: PersistentVolumeClaim
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: batch
+      kind: Job
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: monitoring.coreos.com
+      kind: ServiceMonitor
+    - group: monitoring.coreos.com
+      kind: PrometheusRule
+
+  # RBAC. `ai-interview-platform:developer` can view and sync, but cannot delete
+  # an Application or override its parameters.
+  roles:
+    - name: developer
+      description: View and sync, no destructive operations
+      policies:
+        - p, proj:ai-interview-platform:developer, applications, get, ai-interview-platform/*, allow
+        - p, proj:ai-interview-platform:developer, applications, sync, ai-interview-platform/*, allow
+        - p, proj:ai-interview-platform:developer, logs, get, ai-interview-platform/*, allow
+      groups:
+        - your-org:developers
+
+    - name: admin
+      description: Full control including delete and override
+      policies:
+        - p, proj:ai-interview-platform:admin, applications, *, ai-interview-platform/*, allow
+      groups:
+        - your-org:platform-engineering
+
+  # Ignore replica drift on autoscaled workloads. Without this, ArgoCD sees the
+  # HPA's replica count as a deviation from the committed value and reports the
+  # Application permanently OutOfSync — or, with self-heal on, fights the HPA by
+  # resetting replicas on every scale event.
+  orphanedResources:
+    warn: true
