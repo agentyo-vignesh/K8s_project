@@ -1,6 +1,7 @@
 # =============================================================================
 # AI service runtime dependencies.
-# Pinned exactly so an image rebuilt six months from now is the image that was
+# Pinned exactly so an image rebuilt six months from now is the imag
+e that was
 # tested. Dependabot proposes the upgrades; CI decides whether they land.
 # =============================================================================
 
