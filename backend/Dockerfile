@@ -6,7 +6,7 @@
 # =============================================================================
 
 # ---------- Stage 1: build wheels ----------
-FROM python:3.12.8-slim AS build
+FROM python:3.14.0-slim AS build
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -21,7 +21,7 @@ COPY requirements.txt ./
 RUN pip wheel --wheel-dir /wheels -r requirements.txt
 
 # ---------- Stage 2: runtime ----------
-FROM python:3.12.8-slim AS runtime
+FROM python:3.14.0-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
