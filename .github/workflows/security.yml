@@ -1,11 +1,11 @@
 # =============================================================================
 # Security scanning.
 #
-# Runs on pull requests and nightly - deliberately NOT on every push.
+# Runs on every pull request, nightly, and on pushes that change this file.
 #
 # This workflow has eight jobs. Running it again on the merge commit would scan
 # code that was already scanned on the pull request, and it buries the two
-# workflows that actually matter affter a merge (CI and Deploy) under six more
+# workflows that actually matter after a merge (CI and Deploy) under six more
 # lines in the Actions tab.
 #
 # The nightly run is the one that earns its keep: a dependency you shipped last
@@ -17,10 +17,22 @@
 name: Security
 
 on:
+  # paths belongs on push, NOT on pull_request. On pull_request it would mean
+  # "only scan a PR that edits this file", so every PR touching middleware/,
+  # backend/ or frontend/ would merge with no GitLeaks, no Trivy and no CodeQL.
+  # Scanning pull requests is the point of this workflow.
+  #
+  # On push it means the opposite and is what we want: code pushes stay quiet
+  # because the PR already scanned them, but a change to this file runs
+  # immediately. Without that, a break here sits unnoticed until the next PR or
+  # the nightly run - which is how aquasecurity/trivy-action@0.28.0, a version
+  # that does not exist, reached main with all four Trivy jobs dead.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/security.yml"
   pull_request:
     branches: [main, master, develop]
-    paths:
-      - ".github/workflows/security.yml"  
   schedule:
     # 02:30 UTC daily.
     - cron: "30 2 * * *"
