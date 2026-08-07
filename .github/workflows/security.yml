@@ -19,6 +19,8 @@ name: Security
 on:
   pull_request:
     branches: [main, master, develop]
+    paths:
+      - ".github/workflows/security.yml"  
   schedule:
     # 02:30 UTC daily.
     - cron: "30 2 * * *"
