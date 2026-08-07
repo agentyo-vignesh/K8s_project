@@ -52,12 +52,32 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       # ./backend is the folder; ai-service is the name everywhere else
-      - name: Build and push
+      - name: Build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t scan-target ./backend
+
+      # Scan before the image leaves the runner. A vulnerable image never
+      # reaches ECR, so nothing can pull it by mistake later. Only fixable
+      # CRITICALs fail: an unpatched CVE in a base image cannot be actioned here
+      # and blocking on it would teach people to ignore the gate.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: scan-target
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+
+      - name: Push
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           IMAGE="$REGISTRY/ai-interview-platform/ai-service:$SHA"
-          docker build -t "$IMAGE" ./backend
+          docker tag scan-target "$IMAGE"
           docker push "$IMAGE"
 
       - name: Read account id

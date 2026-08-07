@@ -92,3 +92,24 @@ jobs:
         uses: docker://ghcr.io/yannh/kubeconform:v0.6.7
         with:
           args: -strict -ignore-missing-schemas -summary rendered.yaml
+
+  secrets:
+    name: GitLeaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret committed and later removed is still in the
+          # history and still compromised, so a shallow clone would miss it.
+          fetch-depth: 0
+
+      # Here rather than in security.yml, because a leaked secret must stop the
+      # deploy. security.yml runs on pull requests and nightly, neither of which
+      # gates a push straight to main.
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
