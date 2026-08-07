@@ -1,9 +1,15 @@
 # =============================================================================
 # Security scanning.
 #
-# Runs on pull requests, on pushes to the default branch, and nightly. The
-# nightly run matters: a dependency you shipped last week can become a known CVE
-# tomorrow without anyone touching the repository.
+# Runs on pull requests and nightly - deliberately NOT on every push.
+#
+# This workflow has eight jobs. Running it again on the merge commit would scan
+# code that was already scanned on the pull request, and it buries the two
+# workflows that actually matter after a merge (CI and Deploy) under six more
+# lines in the Actions tab.
+#
+# The nightly run is the one that earns its keep: a dependency you shipped last
+# week can become a known CVE tomorrow with nobody touching the repository.
 #
 # Findings are uploaded as SARIF so they appear in the GitHub Security tab with
 # inline annotations rather than only in a log nobody reads.
@@ -11,13 +17,11 @@
 name: Security
 
 on:
-  push:
-    branches: [main, master, develop]
   pull_request:
     branches: [main, master, develop]
   schedule:
     # 02:30 UTC daily.
-    - cron: '30 2 * * *'
+    - cron: "30 2 * * *"
   workflow_dispatch:
 
 concurrency:
