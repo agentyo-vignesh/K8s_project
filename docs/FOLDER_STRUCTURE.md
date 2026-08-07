@@ -9,7 +9,7 @@ ai-interview-platform/
 ├── helm/              Helm chart
 ├── argocd/            ArgoCD Application and AppProject
 ├── terraform/         all AWS infrastructure, 7 numbered files
-├── .github/           CI/CD, Dependabot, CODEOWNERS
+├── .github/           CI/CD, Dependabot, PR template
 ├── docs/              This documentation
 ├── scripts/           Development and operational scripts
 ├── docker-compose.yml Local stack
@@ -255,15 +255,19 @@ stops any pod in the cluster from assuming an application role.
 │   ├── deploy-frontend.yml    build → ECR → helm upgrade
 │   ├── deploy-middleware.yml  one per service, so one never redeploys another
 │   ├── deploy-ai-service.yml
-│   └── security.yml           GitLeaks, Trivy (fs + images), CodeQL
-├── dependabot.yml      Five ecosystems, grouped
-├── CODEOWNERS
+│   └── security.yml           Trivy (filesystem), CodeQL
+├── dependabot.yml      Patch and security updates only, monthly
 └── pull_request_template.md
 ```
 
-CD **never runs `kubectl apply` or `helm upgrade`.** It pushes images and commits
-the new tag; ArgoCD is the only thing that writes to Kubernetes, so the repository
-stays the source of truth and manual changes show as drift.
+Each service has one CI and one deploy, and the deploy starts from
+`workflow_run` on its own CI - so nothing ships that CI did not pass.
+
+The two scans that must gate a deploy do not live in `security.yml`, because
+that workflow runs on pull requests and nightly and so cannot gate a push
+straight to `main`. GitLeaks runs as the `secrets` job in each CI, and the Trivy
+image scan runs inside each deploy between `docker build` and `docker push`, so
+a vulnerable image never reaches ECR.
 
 ---
 

@@ -34,9 +34,11 @@ Closes #
 ### Deployment
 
 - [ ] No Helm change in this PR
-- [ ] New configuration is exposed as a Helm value and set in **both** `values-dev.yaml` and
-      `values-prod.yaml`
-- [ ] `helm lint` and `helm template` pass for both overlays
+- [ ] New configuration is exposed as a Helm value in the chart for that service
+      (`helm/frontend`, `helm/middleware`, `helm/ai-service`) and, if it is not secret, in the
+      chart's `configmap.yaml`
+- [ ] `helm lint` and `helm template` pass with the values CI uses - the chart defaults leave
+      `imageTag` and `aws.roleArn` empty on purpose
 - [ ] Change is backward-compatible with the currently deployed version, or the incompatibility
       and its rollout order are described below
 
