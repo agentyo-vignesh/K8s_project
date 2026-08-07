@@ -210,10 +210,18 @@ in `terraform/parked/`, documented in
 
 ```
 terraform/
-├── 1.vpc.tf        ACTIVE — the network. Carries terraform{} and provider{}
-├── 2.rds.tf        PostgreSQL + SG. Needs the EKS cluster to exist first
-└── parked/         not loaded by Terraform — outside the working directory
+├── 1.vpc.tf        network — VPC, subnets, NAT. Carries terraform{} and provider{}
+├── 2.eks.tf        cluster, nodes, addons, OIDC provider
+├── 3.rds.tf        PostgreSQL in the private subnets
+├── 4.ecr.tf        three container registries
+├── 5.secrets.tf    Secrets Manager — the values the pods read
+├── 6.iam.tf        IRSA roles, one per service
+├── 7.github.tf     the role GitHub Actions assumes to deploy
+└── parked/         an older full-stack version — not loaded by Terraform
 ```
+
+Everything applies in one `terraform apply`. The numbers are for humans;
+Terraform works out the real order from the dependencies between resources.
 
 Terraform only loads `.tf` files in the working directory, not subdirectories, so
 `parked/` is inert without commenting anything out.
