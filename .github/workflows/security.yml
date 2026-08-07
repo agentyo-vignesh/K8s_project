@@ -5,7 +5,7 @@
 #
 # This workflow has eight jobs. Running it again on the merge commit would scan
 # code that was already scanned on the pull request, and it buries the two
-# workflows that actually matter after a merge (CI and Deploy) under six more
+# workflows that actually matter affter a merge (CI and Deploy) under six more
 # lines in the Actions tab.
 #
 # The nightly run is the one that earns its keep: a dependency you shipped last
