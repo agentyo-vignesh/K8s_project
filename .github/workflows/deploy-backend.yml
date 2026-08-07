@@ -36,12 +36,12 @@ jobs:
             context: backend # the FastAPI service lives in backend/
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # secrets, not env: this is a repository secret set in Settings.
       # Your editor may warn that it cannot see it - that is expected.
       - name: Log in to AWS
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -64,10 +64,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Log in to AWS
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
