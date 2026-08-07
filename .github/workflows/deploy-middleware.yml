@@ -7,12 +7,13 @@
 name: Deploy middleware
 
 on:
-  push:
+  # Only after CI middleware passes. No paths filter is needed here - CI middleware
+  # has one, so a change that misses it never starts CI and never reaches
+  # this workflow either.
+  workflow_run:
+    workflows: ["CI middleware"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "middleware/**"
-      - "helm/middleware/**"
-      - ".github/workflows/deploy-middleware.yml"
   workflow_dispatch:
 
 env:
@@ -20,16 +21,29 @@ env:
   CLUSTER: ai-interview
   NAMESPACE: ai-interview
 
+  # The commit CI actually tested. On a workflow_run event github.sha is the
+  # tip of the default branch, NOT the commit that triggered the run - using
+  # it would build one commit and tag it as another. Falls back to github.sha
+  # for a manual dispatch, where workflow_run is empty.
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 permissions:
   contents: read
   id-token: write
 
 jobs:
   deploy:
+    # workflow_run fires when CI finishes, pass OR fail. Without this a red
+    # CI would still deploy.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Same reason as SHA: the default checkout takes the branch tip,
+          # which may already be a newer commit than the one CI passed.
+          ref: ${{ env.SHA }}
 
       - name: Log in to AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -46,7 +60,7 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          IMAGE="$REGISTRY/ai-interview-platform/middleware:${{ github.sha }}"
+          IMAGE="$REGISTRY/ai-interview-platform/middleware:$SHA"
           docker build -t "$IMAGE" ./middleware
           docker push "$IMAGE"
 
@@ -72,7 +86,7 @@ jobs:
           helm upgrade --install middleware ./helm/middleware \
             --namespace "$NAMESPACE" \
             --set imageRegistry="$REGISTRY" \
-            --set imageTag="${{ github.sha }}" \
+            --set imageTag="$SHA" \
             --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-middleware" \
             --wait --timeout 8m
 
