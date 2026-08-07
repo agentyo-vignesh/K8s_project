@@ -26,6 +26,14 @@ describe('describeError', () => {
     expect(describeError(error)).toBe('Candidate already exists with email a@b.c');
   });
 
+  it('explains an HTML reply as routing rather than a server fault', () => {
+    // nginx answers an unrouted /api with index.html and status 200, so the
+    // message has to point at routing, not at the middleware being down.
+    const message = describeError({ isHtmlResponse: true });
+    expect(message).toMatch(/web page instead of data/);
+    expect(message).toMatch(/\/api/);
+  });
+
   it('explains a timeout in terms the user can act on', () => {
     expect(describeError({ code: 'ECONNABORTED' })).toContain('timed out');
   });

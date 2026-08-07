@@ -96,7 +96,24 @@ async function refreshAccessToken() {
 }
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // An API reply that arrives as HTML never reached the API. nginx serves the
+    // SPA for any path it does not recognise, so /api/... comes back as
+    // index.html with status 200 whenever nothing routes /api to the middleware
+    // - no Ingress in the cluster, or a wrong apiBaseUrl.
+    //
+    // Status 200 means Axios resolves happily and the caller reads fields off a
+    // string of HTML. The failure then surfaces somewhere unrelated, as
+    // "Cannot read properties of undefined", and points at the wrong thing.
+    const contentType = response.headers?.['content-type'] ?? '';
+    if (contentType.includes('text/html')) {
+      const error = new Error('API request was answered with HTML');
+      error.isHtmlResponse = true;
+      error.config = response.config;
+      return Promise.reject(error);
+    }
+    return response;
+  },
   async (error) => {
     const { response, config: originalRequest } = error;
 
@@ -142,6 +159,9 @@ export function describeError(error, fallback = 'Something went wrong. Please tr
   }
   if (data?.message) {
     return data.message;
+  }
+  if (error.isHtmlResponse) {
+    return 'The API is not reachable at this address - the server returned a web page instead of data. Check that /api is routed to the middleware.';
   }
   if (error.code === 'ECONNABORTED') {
     return 'The request timed out. The server may be busy; please try again.';
