@@ -4,10 +4,10 @@
 # tested. Dependabot proposes the upgrades; CI decides whether they land.
 # =============================================================================
 
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.10.4
-pydantic-settings==2.7.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+pydantic-settings==2.14.2
 
 # Persistence. psycopg 3 is the current driver; SQLAlchemy 2.x style only.
 SQLAlchemy==2.0.36
