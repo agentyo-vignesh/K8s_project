@@ -1,0 +1,90 @@
+# Tests the middleware. Does not deploy, does not touch AWS.
+name: CI middleware
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "middleware/**"
+      - "helm/middleware/**"
+      - "helm/platform/**"
+      - ".github/workflows/ci-middleware.yml"
+  pull_request:
+    paths:
+      - "middleware/**"
+      - "helm/middleware/**"
+      - "helm/platform/**"
+      - ".github/workflows/ci-middleware.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-middleware-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: Spring Boot app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # No database service. All 70 tests are plain JUnit and Mockito, so Spring
+    # never starts and nothing connects to a database.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Build and test
+        working-directory: middleware
+        run: mvn -B -ntp verify
+
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: middleware/target/surefire-reports/TEST-*.xml
+          check_name: Middleware test results
+          fail_on_failure: false
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      # lint renders with the values given here. The chart defaults leave
+      # imageTag and roleArn empty on purpose, and lint would fail on the
+      # malformed output rather than on anything real.
+      - name: Lint
+        run: |
+          REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
+          ROLE=arn:aws:iam::000000000000:role/ci
+          helm lint ./helm/platform
+          helm lint ./helm/middleware --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE
+
+      - name: Render
+        run: |
+          REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
+          ROLE=arn:aws:iam::000000000000:role/ci
+          helm template ci ./helm/platform > rendered.yaml
+          helm template ci ./helm/middleware --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE >> rendered.yaml
+
+      # Writes into the workspace, not /tmp: a docker:// action only mounts the
+      # workspace, so a file in /tmp is invisible to it.
+      - name: Validate against Kubernetes schemas
+        uses: docker://ghcr.io/yannh/kubeconform:v0.6.7
+        with:
+          args: -strict -ignore-missing-schemas -summary rendered.yaml

@@ -1,0 +1,80 @@
+# Build the middleware image, push it to ECR, deploy it with Helm.
+#
+# Separate from the AI service on purpose. The middleware uses a Recreate
+# rollout - the disk is ReadWriteOnce, so the old pod must die before the new
+# one starts. Redeploying it because the AI service changed would take the API
+# down for ~40 seconds for no reason.
+name: Deploy middleware
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "middleware/**"
+      - "helm/middleware/**"
+      - ".github/workflows/deploy-middleware.yml"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  CLUSTER: ai-interview
+  NAMESPACE: ai-interview
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tagged with the commit sha, so every deploy is traceable to one commit
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/ai-interview-platform/middleware:${{ github.sha }}"
+          docker build -t "$IMAGE" ./middleware
+          docker push "$IMAGE"
+
+      - name: Read account id
+        id: aws
+        run: echo "account=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      # The deploy role needs an EKS access entry, or this fails with
+      # "You must be logged in to the server"
+      - name: Get cluster credentials
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER"
+
+      # No database host and no password here. The pod reads them from Secrets
+      # Manager itself, using the IAM role passed below.
+      #
+      # If a migration in this release adds or changes an ai_* table, deploy
+      # this first and let it finish before deploying the AI service - Flyway
+      # owns those tables.
+      - name: Deploy
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          helm upgrade --install middleware ./helm/middleware \
+            --namespace "$NAMESPACE" \
+            --set imageRegistry="$REGISTRY" \
+            --set imageTag="${{ github.sha }}" \
+            --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-middleware" \
+            --wait --timeout 8m
+
+      - name: Show what is running
+        run: kubectl get pods -n "$NAMESPACE" -l app=middleware
