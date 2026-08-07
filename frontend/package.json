@@ -25,17 +25,17 @@
   },
   "devDependencies": {
     "@eslint/js": "9.17.0",
-    "@testing-library/jest-dom": "6.6.3",
-    "@testing-library/react": "16.1.0",
-    "@testing-library/user-event": "14.5.2",
-    "@vitejs/plugin-react": "4.3.4",
-    "eslint": "9.17.0",
-    "eslint-plugin-react": "7.37.3",
-    "eslint-plugin-react-hooks": "5.1.0",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.3",
+    "@vitejs/plugin-react": "6.0.5",
+    "eslint": "10.8.0",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
     "globals": "15.14.0",
-    "jsdom": "25.0.1",
-    "vite": "6.0.7",
-    "vitest": "2.1.8"
+    "jsdom": "30.0.1",
+    "vite": "8.2.0",
+    "vitest": "4.1.10"
   },
   "engines": {
     "node": ">=20"
