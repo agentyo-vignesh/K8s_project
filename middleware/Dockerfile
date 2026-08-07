@@ -20,7 +20,7 @@ RUN mvn -B -ntp clean package -DskipTests \
     && java -Djarmode=layertools -jar target/middleware.jar extract --destination /build/layers
 
 # ---------- Stage 2: runtime ----------
-FROM eclipse-temurin:21.0.5_11-jre-alpine AS runtime
+FROM eclipse-temurin:24.0.2_12-jre-alpine AS runtime
 
 # curl is required by the container/Kubernetes health probes.
 RUN apk add --no-cache curl tzdata \
