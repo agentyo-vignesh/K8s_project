@@ -21,7 +21,7 @@ spec:
 
       containers:
         - name: ai-service
-          image: {{ .Values.imageRegistry }}/ai-interview-platform/ai-service:{{ .Values.imageTag }}
+          image: {{ .Values.imageRegistry }}/ai-interview-platform/ai-service:{{ required "imageTag is required - pass --set imageTag=<sha>" .Values.imageTag }}
           ports:
             - name: http
               containerPort: 8000

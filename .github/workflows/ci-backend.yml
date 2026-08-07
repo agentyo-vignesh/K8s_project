@@ -116,8 +116,8 @@ jobs:
           DB=ci-placeholder.rds.amazonaws.com
 
           helm template ci ./helm/platform                                             > rendered.yaml
-          helm template ci ./helm/middleware --set imageRegistry=$REG --set db.host=$DB >> rendered.yaml
-          helm template ci ./helm/ai-service --set imageRegistry=$REG --set db.host=$DB >> rendered.yaml
+          helm template ci ./helm/middleware --set imageRegistry=$REG --set imageTag=ci >> rendered.yaml
+          helm template ci ./helm/ai-service --set imageRegistry=$REG --set imageTag=ci >> rendered.yaml
 
       # Writes into the workspace, not /tmp: a docker:// action only
       # mounts the workspace, so a file in /tmp is invisible to it.

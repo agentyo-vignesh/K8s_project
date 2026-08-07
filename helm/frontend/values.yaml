@@ -1,6 +1,10 @@
 # Where the image lives
 imageRegistry: ""
-imageTag: v1
+# No default. The deploy workflow passes the commit sha, so every running
+# pod is traceable to one commit. A default like "v1" would silently pin
+# whatever was tagged v1 months ago - for middleware that is the image
+# built before the AWS sts module was added, which crashes at startup.
+imageTag: ""
 
 replicas: 1
 
