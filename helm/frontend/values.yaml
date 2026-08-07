@@ -11,14 +11,18 @@ replicas: 1
 # Where the browser sends /api requests. Read at container start and written
 # into window.__APP_CONFIG__, so one image works in every environment.
 #
-# Empty means same-origin, which is correct ONLY once an Ingress routes /api to
-# the middleware. There is no Ingress yet, and nginx.conf has no /api location -
-# so today a same-origin call falls through to the SPA rewrite and comes back as
-# index.html with HTTP 200. The app then fails parsing HTML as JSON, which looks
-# like an application bug rather than missing routing.
+# Empty means same-origin, which works because the ALB Ingress in helm/platform
+# routes /api to the middleware. Reach the app at the Ingress address:
 #
-# To try the app before the Ingress exists, port-forward both services and point
-# the frontend at the middleware:
+#   kubectl get ingress ai-interview -n ai-interview
+#
+# Uninstall that Ingress and this breaks in a confusing way: nginx.conf has no
+# /api location, so a same-origin call falls through to the SPA rewrite and
+# returns index.html with HTTP 200. The app then fails parsing HTML as JSON,
+# which reads like an application bug rather than missing routing. The Axios
+# interceptor rejects an HTML body to make that distinction visible.
+#
+# To bypass the Ingress entirely, port-forward both services:
 #
 #   kubectl port-forward -n ai-interview svc/middleware 8080:8080
 #   kubectl port-forward -n ai-interview svc/frontend   3000:80

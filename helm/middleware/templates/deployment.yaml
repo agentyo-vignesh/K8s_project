@@ -77,6 +77,12 @@ apiVersion: v1
 kind: Service
 metadata:
   name: middleware
+  annotations:
+    # The ALB health check for this service's target group. The Ingress asks
+    # for /healthz, which the middleware does not serve, so without this every
+    # target would be marked unhealthy and /api would return 503.
+    # A Service annotation beats the Ingress one for its own target group.
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
 spec:
   selector:
     app: middleware

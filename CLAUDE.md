@@ -120,10 +120,10 @@ the IRSA-projected token; locally it finds your SSO profile. Never add `AWS_ACCE
 `frontend/docker-entrypoint.sh` writes `runtime-config.js` (`window.__APP_CONFIG__`) from `API_BASE_URL`
 on every container start. One image is promoted dev → prod unchanged. Do not bake API URLs into the bundle.
 
-`apiBaseUrl: ""` means same-origin, which needs an Ingress routing `/api` to the middleware. **There is no
-Ingress yet** and `nginx.conf` has no `/api` location, so a same-origin call falls through to the SPA
-rewrite and returns `index.html` with HTTP 200. The Axios interceptor rejects an HTML body for exactly
-that reason - see `frontend/src/api/client.js`.
+`apiBaseUrl: ""` means same-origin, served by the ALB Ingress in `helm/platform`. Remove that Ingress and
+the failure is confusing rather than obvious: `nginx.conf` has no `/api` location, so a same-origin call
+falls through to the SPA rewrite and returns `index.html` with HTTP 200. The Axios interceptor rejects an
+HTML body for exactly that reason - see `frontend/src/api/client.js`.
 
 ## Things that will bite you
 
@@ -178,8 +178,14 @@ terraform/
 └── parked/        an older full-stack module version, commented out
 ```
 
-Cluster `ai-interview` in `ap-south-1`. The `kubernetes.io/cluster/ai-interview` subnet tags in `1.vpc.tf`
-are pre-stamped for a load balancer controller and must match the cluster name.
+Cluster `ai-interview` in `ap-south-1`. The `kubernetes.io/role/elb` and `kubernetes.io/cluster/ai-interview`
+subnet tags in `1.vpc.tf` are what let the load balancer controller find the public subnets; they must
+match the cluster name.
+
+**The load balancer controller is not in Terraform.** Its IAM role was created by
+`eksctl create iamserviceaccount`, which builds a CloudFormation stack, and the controller itself by
+`helm install` into `kube-system`. So `terraform destroy` leaves both behind - see the teardown note in
+`terraform/README.md`.
 
 ### Secrets never become a Kubernetes Secret
 
