@@ -15,8 +15,9 @@ Two consequences that shape everything:
   is excluded from the middleware's readiness group. The AI call runs outside any transaction. Bad config
   fails at startup. If a change makes one of these "cleaner", it breaks the teaching value — check
   `docs/TROUBLESHOOTING.md` before altering health, transactions or startup validation.
-- **`docs/DEVOPS_PHASES.md` is the session runbook**, not reference material. It is the source of truth
-  for what has been created and in what order.
+- **`docs/DEVOPS_PHASES.md` and `docs/DEPLOYMENT.md` describe an earlier design** - manual `eksctl`, one
+  umbrella chart, ArgoCD. None of that is how this repository works now. Trust `terraform/`, `helm/` and
+  `.github/workflows/` over those two documents.
 
 ## Commands
 
@@ -36,7 +37,7 @@ Two consequences that shape everything:
 |---|---|---|---|
 | `middleware/` | `mvn -B verify` (70 tests + JaCoCo) | — | `mvn test -Dtest=JwtServiceTest#refreshTokenRejectedAsAccessToken` |
 | `backend/` | `pytest` (75 tests, SQLite) | `ruff check . && mypy app` | `pytest tests/test_schema_parity.py::TestSchemaParity` |
-| `frontend/` | `npm run test -- --run` (19 Vitest) | `npm run lint` (`--max-warnings 0`) | `npx vitest run src/<path>.test.jsx` |
+| `frontend/` | `npm run test -- --run` (20 Vitest) | `npm run lint` (`--max-warnings 0`) | `npx vitest run src/<path>.test.jsx` |
 
 Requires JDK 21 and Maven on PATH — there is no Maven wrapper.
 
@@ -51,8 +52,12 @@ cd frontend  && npm run lint && npm run test -- --run && npm run build
 ### Helm
 
 ```bash
-helm lint helm/ai-interview-platform
-helm template ai-interview helm/ai-interview-platform -f helm/ai-interview-platform/values-prod.yaml
+REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
+ROLE=arn:aws:iam::000000000000:role/ci
+
+helm lint ./helm/frontend   --set imageRegistry=$REG --set imageTag=ci
+helm lint ./helm/middleware --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE
+helm lint ./helm/ai-service --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE
 ```
 
 ## Architecture
@@ -115,8 +120,10 @@ the IRSA-projected token; locally it finds your SSO profile. Never add `AWS_ACCE
 `frontend/docker-entrypoint.sh` writes `runtime-config.js` (`window.__APP_CONFIG__`) from `API_BASE_URL`
 on every container start. One image is promoted dev → prod unchanged. Do not bake API URLs into the bundle.
 
-`apiBaseUrl: ""` means same-origin — the Ingress routes `/api` to the middleware on the same host, which
-is why there is no CORS configuration in production.
+`apiBaseUrl: ""` means same-origin, which needs an Ingress routing `/api` to the middleware. **There is no
+Ingress yet** and `nginx.conf` has no `/api` location, so a same-origin call falls through to the SPA
+rewrite and returns `index.html` with HTTP 200. The Axios interceptor rejects an HTML body for exactly
+that reason - see `frontend/src/api/client.js`.
 
 ## Things that will bite you
 
@@ -126,8 +133,8 @@ Skipping any one produces a value that works locally and is missing in productio
 
 1. `AppProperties` (typed `@ConfigurationProperties` record)
 2. `application.yml` — `${ENV_VAR:default}`
-3. `helm/ai-interview-platform/templates/configmap.yaml`
-4. `values.yaml` **and** `values-dev.yaml` / `values-prod.yaml`
+3. `helm/<service>/templates/configmap.yaml`
+4. `helm/<service>/values.yaml` - there are no dev/prod overlays; the deploy workflow supplies what differs
 
 AI service equivalent: `backend/app/core/config.py` `Settings`, then the chart.
 
@@ -154,56 +161,54 @@ credentials, `INTERNAL_API_KEY`) are verified by `scripts/check-env.sh`.
 Label by *route template*, never a concrete URL. Labelling by raw path creates one time series per
 interview id.
 
-## Infrastructure state (current, and it contradicts the docs)
+## Infrastructure
 
-Terraform is **active**, applying in numbered order. `terraform/README.md` and the root `README.md` still
-describe it as "parked / fully commented out" — that is stale.
+Terraform applies the whole stack in one `terraform apply`. The numbers are for humans; Terraform derives
+the real order from the dependency graph.
 
 ```
 terraform/
-├── 1.vpc.tf     VPC 10.0.0.0/16, 2 public + 2 private subnets, IGW, NAT. Holds terraform{} + provider{}
-├── 2.eks.tf     Cluster + node group + OIDC provider + 4 addons + EBS CSI IRSA (raw resources, no module)
-├── 3.rds.tf     PostgreSQL 16.14, private subnets, SG referencing the cluster SG
-├── 4.ecr.tf     Three repositories
-└── parked/      Full-stack module version, fully commented out, plus terraform.tfvars.example
+├── 1.vpc.tf       VPC 10.0.0.0/16, 2 public + 2 private subnets, IGW, NAT
+├── 2.eks.tf       cluster, node group, OIDC provider, 4 addons, EBS CSI IRSA role
+├── 3.rds.tf       PostgreSQL 16.14, private subnets, SG referencing the cluster SG
+├── 4.ecr.tf       three repositories
+├── 5.secrets.tf   two Secrets Manager secrets, in the exact shape the apps parse
+├── 6.iam.tf       one IRSA role per service
+├── 7.github.tf    GitHub OIDC provider + the role Actions assumes, with an EKS access entry
+└── parked/        an older full-stack module version, commented out
 ```
-
-All four apply in **one pass** — `3.rds.tf` references `aws_eks_cluster.main` directly rather than a
-`data` lookup, which is what removed the manual eksctl step between them.
 
 Cluster `ai-interview` in `ap-south-1`. The `kubernetes.io/cluster/ai-interview` subnet tags in `1.vpc.tf`
-are pre-stamped for the load balancer controller and must match the cluster name.
+are pre-stamped for a load balancer controller and must match the cluster name.
 
-Runbook stages 1.1–1.4 are complete. **Stages 1.5 (S3 + Secrets Manager) and 1.6 (IRSA roles) are
-optional** — the chart defaults (`APP_SECRETS_PROVIDER=env`, `storage.type=local`,
-`aws.secretsManager.enabled=false`) need none of them.
+### Secrets never become a Kubernetes Secret
 
-### Two known-wrong things in the docs
+Each pod reads Secrets Manager itself over IRSA — `APP_SECRETS_PROVIDER=aws` for the middleware,
+`SECRETS_PROVIDER=aws` for the AI service. There is no Secret object in the namespace, so no amount of
+RBAC exposes the database password.
 
-- **`docs/DEVOPS_PHASES.md` Stage 1.4 creates the wrong ECR repository names.** It uses
-  `ai-interview/<service>`; the Helm chart composes `<global.imageRegistry>/<image.repository>` where
-  `values.yaml` sets `ai-interview-platform/<service>`. Following the runbook yields repositories the
-  chart can never pull from, surfacing as `ImagePullBackOff`. `4.ecr.tf` uses the correct names.
-- `terraform/README.md` teardown ordering assumes an RDS security group created by hand. It is now
-  Terraform-managed, so `terraform destroy` handles it.
+The field names in `5.secrets.tf` are fixed by `AwsSecretsManagerSecretService.java` and
+`backend/app/core/secrets.py`, and match what RDS managed rotation writes. Note **`dbname`**, not `dbName`.
 
-### Deploying against this infrastructure
+**The Java SDK needs the `sts` module for IRSA.** Without it the default credential chain skips the
+projected token entirely and the pod dies with "Unable to load credentials from any of the providers in
+the chain". See the comment beside that dependency in `middleware/pom.xml`.
 
-`postgresql.enabled` defaults to **`true`**, which deploys an in-cluster Postgres StatefulSet and leaves
-RDS unused. Always override:
+### Deploying
 
-```
---set global.imageRegistry=<account>.dkr.ecr.ap-south-1.amazonaws.com
---set postgresql.enabled=false
---set postgresql.external.host=<rds endpoint>
---set secrets.data.dbPassword=<terraform output -raw db_password>
---set secrets.data.jwtSigningKey=<48 random bytes>
+One chart per service plus `platform` for the default StorageClass. Install `platform` first.
+
+```bash
+helm upgrade --install middleware ./helm/middleware -n ai-interview   --set imageRegistry=<account>.dkr.ecr.ap-south-1.amazonaws.com   --set imageTag=<commit sha>   --set aws.roleArn=$(terraform output -raw middleware_role_arn)
 ```
 
-`jwtSigningKey` must be ≥32 bytes or the middleware refuses to start — deliberately.
+`imageTag` and `aws.roleArn` have **no defaults** and the template refuses to render without them. Both
+were previously defaulted, and both failed silently: a stale `v1` tag deployed the image built before the
+`sts` fix, and an empty role ARN produced a ServiceAccount whose annotation injected no token.
 
-CD never writes to Kubernetes. It commits an image tag; **ArgoCD** syncs, so manual `helm upgrade` after
-handover shows as drift.
+The middleware rollout is `Recreate` — its volume is ReadWriteOnce, so the old pod must terminate first.
+That is why each service has its own deploy workflow: an AI-service change must not cost the middleware
+40 seconds of downtime.
 
 ## Conventions
 

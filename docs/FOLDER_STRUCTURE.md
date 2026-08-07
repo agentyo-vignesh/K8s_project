@@ -7,7 +7,6 @@ ai-interview-platform/
 ├── backend/           FastAPI AI service   + .env.example
 ├── database/          Container bootstrap  + .env.example   (DDL lives in middleware/)
 ├── helm/              Helm chart
-├── argocd/            ArgoCD Application and AppProject
 ├── terraform/         all AWS infrastructure, 7 numbered files
 ├── .github/           CI/CD, Dependabot, PR template
 ├── docs/              This documentation

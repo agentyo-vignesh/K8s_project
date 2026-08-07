@@ -119,7 +119,6 @@ middleware/   Spring Boot API (owns schema)   + middleware/.env
 backend/      FastAPI AI service              + backend/.env
 database/     Container bootstrap only        + database/.env
 helm/         one chart per service, plus platform/ for the shared pieces
-argocd/       Application + AppProject
 terraform/    all AWS infrastructure, applied in one command
 .github/      CI, CD, security scanning, Dependabot
 docs/         Architecture, API, setup, deployment, troubleshooting

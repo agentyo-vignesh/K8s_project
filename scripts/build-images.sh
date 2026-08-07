@@ -96,8 +96,18 @@ fi
 
 info "Done."
 printf '\nDeploy this build:\n\n'
-printf '  helm upgrade --install ai-interview ./helm/ai-interview-platform \\\n'
-[ -n "${REGISTRY}" ] && printf '    --set global.imageRegistry=%s \\\n' "${REGISTRY}"
-printf '    --set frontend.image.tag=%s \\\n' "${TAG}"
-printf '    --set middleware.image.tag=%s \\\n' "${TAG}"
-printf '    --set aiService.image.tag=%s\n\n' "${TAG}"
+printf '  # one chart per service. aws.roleArn comes from:
+'
+printf '  #   terraform output -raw middleware_role_arn | ai_service_role_arn
+
+'
+for svc in frontend middleware ai-service; do
+    printf '  helm upgrade --install %s ./helm/%s -n ai-interview \
+' "${svc}" "${svc}"
+    [ -n "${REGISTRY}" ] && printf '    --set imageRegistry=%s \
+' "${REGISTRY}"
+    printf '    --set imageTag=%s
+' "${TAG}"
+done
+printf '
+'

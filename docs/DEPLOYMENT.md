@@ -1,5 +1,21 @@
 # Deployment guide
 
+> **This document describes an earlier design and is no longer accurate.**
+>
+> It was written when the cluster was created by hand with `eksctl`, the app shipped as one umbrella
+> Helm chart with dev/prod overlays, and ArgoCD synced it. None of that is true now:
+>
+> | Then | Now |
+> |---|---|
+> | `eksctl create cluster`, AWS CLI for RDS/ECR/secrets | `terraform apply` - seven numbered files |
+> | `helm/ai-interview-platform` + `values-{dev,prod}.yaml` | one chart per service, no overlays |
+> | `argocd/` syncs from Git | GitHub Actions runs `helm upgrade` directly |
+> | Secrets Manager into a Kubernetes Secret | each pod reads Secrets Manager itself over IRSA |
+>
+> `argocd/` and `helm/ai-interview-platform/` have been deleted, so the paths below do not exist.
+> Kept because the reasoning is still worth reading. For what the repository actually does, see
+> [`../README.md`](../README.md), `terraform/`, `helm/` and `.github/workflows/`.
+
 Docker Compose → Amazon EKS, with the cluster and its AWS components created
 **manually**.
 

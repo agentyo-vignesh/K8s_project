@@ -213,7 +213,7 @@ else changes: `ResumeService` does not know which backend it has.
 cd middleware && mvn verify
 cd backend && ruff check . && mypy app && pytest
 cd frontend && npm run lint && npm run test -- --run && npm run build
-helm lint ./helm/ai-interview-platform -f ./helm/ai-interview-platform/values-dev.yaml
+helm lint ./helm/frontend --set imageRegistry=x --set imageTag=ci
 terraform -chdir=terraform fmt -check -recursive
 ```
 
