@@ -47,5 +47,16 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/test/setup.js',
     css: false,
+
+    coverage: {
+      provider: 'v8',
+      // lcov is what SonarQube reads; text keeps the number visible in the log.
+      reporter: ['text', 'lcov'],
+      reportsDirectory: './coverage',
+      // Without this only files a test imported are counted, so an untested
+      // file improves coverage by being absent from the report.
+      all: true,
+      include: ['src/**/*.{js,jsx}'],
+    },
   },
 });

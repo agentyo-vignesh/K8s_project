@@ -1,0 +1,105 @@
+# Analyses all three services as one SonarQube project. Does not deploy.
+#
+# One project rather than three, so the quality gate describes the platform.
+# Split per service and a regression in one hides behind healthy numbers in
+# the others.
+#
+# The tests run here again rather than reusing the CI results, because Sonar
+# needs all three coverage reports present in one workspace at scan time.
+# Passing them between workflows would mean artifacts and a download step,
+# which costs more to explain than the duplicated minutes are worth.
+name: SonarQube
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: sonarqube-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyse:
+    name: Analyse
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      # First, so a missing token costs five seconds instead of eight minutes
+      # of tests followed by an authentication error.
+      - name: Check the token exists
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "SONAR_TOKEN is not set."
+            echo "SonarQube Cloud: My Account > Security > Generate Token."
+            echo "Then: repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          # Full history. SonarQube decides what counts as new code from the
+          # commit dates, and a shallow clone makes every line look like it
+          # was written today - so the new-code gate covers the whole project.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Each of the next three writes a report named in sonar-project.properties.
+      # A missing report is not an error - Sonar reports 0% for that language,
+      # which reads like a code problem rather than a build one.
+      - name: Middleware - tests and jacoco.xml
+        working-directory: middleware
+        run: mvn -B -ntp verify
+
+      - name: AI service - tests and coverage.xml
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pytest --cov=app --cov-report=xml
+
+      - name: Frontend - tests and lcov.info
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run test:coverage
+
+      - name: Scan
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Self-hosting later is only a change to this line.
+          SONAR_HOST_URL: https://sonarcloud.io
+
+      # The scan uploads and returns immediately. Without this the job is green
+      # whatever the gate says, and a failed gate is visible only if someone
+      # opens the dashboard.
+      - name: Quality gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

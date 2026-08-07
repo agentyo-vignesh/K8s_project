@@ -41,6 +41,14 @@ dist/
 .vite/
 npm-debug.log*
 pnpm-debug.log*
+# Anchored, not a bare coverage/ - an unanchored directory pattern matches at
+# every depth, and git does not descend into an excluded directory, so a source
+# folder that happened to share the name would vanish with no way to negate it.
+frontend/coverage/
+
+# ---------- SonarQube ----------
+# Scanner working directory, written next to sonar-project.properties.
+.scannerwork/
 
 # ---------- Terraform ----------
 .terraform/
