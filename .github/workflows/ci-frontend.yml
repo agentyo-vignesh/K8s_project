@@ -67,8 +67,11 @@ jobs:
         with:
           version: v3.16.3
 
+      # lint renders with the values given here. Without them it uses the
+      # chart defaults, where imageTag is deliberately empty, and fails on
+      # the malformed image reference rather than on anything real.
       - name: Lint
-        run: helm lint ./helm/frontend
+        run: helm lint ./helm/frontend --set imageRegistry=000000000000.dkr.ecr.ap-south-1.amazonaws.com --set imageTag=ci
 
       # Placeholder registry - nothing here talks to AWS
       - name: Render

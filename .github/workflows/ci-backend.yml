@@ -102,11 +102,14 @@ jobs:
         with:
           version: v3.16.3
 
+      # lint renders with these values; the chart defaults leave imageTag
+      # empty on purpose, which would fail on a malformed image reference.
       - name: Lint
         run: |
+          REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
           for c in platform middleware ai-service; do
             echo "--- $c"
-            helm lint ./helm/$c
+            helm lint ./helm/$c --set imageRegistry=$REG --set imageTag=ci
           done
 
       # Placeholder values - nothing here talks to AWS
