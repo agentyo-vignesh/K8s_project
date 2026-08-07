@@ -23,7 +23,7 @@ COPY src ./src
 RUN npm run build
 
 # ---------- Stage 2: runtime ----------
-FROM nginx:1.27.3-alpine AS runtime
+FROM nginx:1.31.2-alpine AS runtime
 
 # Every directory nginx writes to must be owned by the unprivileged user, and
 # the default config is removed so only ours is served.
