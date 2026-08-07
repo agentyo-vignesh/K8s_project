@@ -22,8 +22,8 @@ boto3==1.35.81
 openai==1.58.1
 
 # Prometheus exposition for /metrics.
-prometheus-client==0.21.1
+prometheus-client==0.26.0
 
 # Multipart is not used by this service, but starlette needs it for TestClient
 # form handling in the test suite.
-python-multipart==0.0.20
+python-multipart==0.0.32
