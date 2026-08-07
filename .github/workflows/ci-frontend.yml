@@ -75,9 +75,11 @@ jobs:
         run: |
           helm template ci ./helm/frontend \
             --set imageRegistry=000000000000.dkr.ecr.ap-south-1.amazonaws.com \
-            > /tmp/frontend.yaml
+            > rendered.yaml
 
+      # Writes into the workspace, not /tmp: a docker:// action only
+      # mounts the workspace, so a file in /tmp is invisible to it.
       - name: Validate against Kubernetes schemas
         uses: docker://ghcr.io/yannh/kubeconform:v0.6.7
         with:
-          args: -strict -ignore-missing-schemas -summary /tmp/frontend.yaml
+          args: -strict -ignore-missing-schemas -summary rendered.yaml

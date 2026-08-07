@@ -55,6 +55,10 @@ module = ["boto3.*", "botocore.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
+# Puts the project root on sys.path so "import app" works from a clean
+# checkout. Without it pytest only sees tests/ and fails with
+# ModuleNotFoundError: No module named 'app'.
+pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 filterwarnings = ["error::DeprecationWarning:app.*"]

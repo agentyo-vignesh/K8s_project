@@ -115,12 +115,14 @@ jobs:
           REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
           DB=ci-placeholder.rds.amazonaws.com
 
-          helm template ci ./helm/platform                                             > /tmp/backend.yaml
-          helm template ci ./helm/middleware --set imageRegistry=$REG --set db.host=$DB >> /tmp/backend.yaml
-          helm template ci ./helm/ai-service --set imageRegistry=$REG --set db.host=$DB >> /tmp/backend.yaml
+          helm template ci ./helm/platform                                             > rendered.yaml
+          helm template ci ./helm/middleware --set imageRegistry=$REG --set db.host=$DB >> rendered.yaml
+          helm template ci ./helm/ai-service --set imageRegistry=$REG --set db.host=$DB >> rendered.yaml
 
+      # Writes into the workspace, not /tmp: a docker:// action only
+      # mounts the workspace, so a file in /tmp is invisible to it.
       - name: Validate against Kubernetes schemas
         uses: docker://ghcr.io/yannh/kubeconform:v0.6.7
         with:
           # ExternalSecret is a custom resource, so its schema is not built in
-          args: -strict -ignore-missing-schemas -summary /tmp/backend.yaml
+          args: -strict -ignore-missing-schemas -summary rendered.yaml
