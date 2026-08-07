@@ -51,10 +51,15 @@ pnpm-debug.log*
 .terraform.lock.hcl
 
 # ---------- Runtime data ----------
-data/
-uploads/
-storage/
-logs/
+# Leading slash matters. Written as "storage/" this also matched
+# middleware/src/main/java/.../service/storage/ and silently dropped five source
+# files from the repository - the build only failed once CI compiled a fresh
+# clone. A negation cannot rescue that: git does not descend into an excluded
+# directory, so anchoring is the fix.
+/data/
+/uploads/
+/storage/
+/logs/
 *.log
 
 # ---------- IDE / OS ----------
