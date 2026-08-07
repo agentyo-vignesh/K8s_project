@@ -78,6 +78,7 @@ jobs:
         run: |
           helm template ci ./helm/frontend \
             --set imageRegistry=000000000000.dkr.ecr.ap-south-1.amazonaws.com \
+            --set imageTag=ci \
             > rendered.yaml
 
       # Writes into the workspace, not /tmp: a docker:// action only
