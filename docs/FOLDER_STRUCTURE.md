@@ -8,7 +8,7 @@ ai-interview-platform/
 ├── database/          Container bootstrap  + .env.example   (DDL lives in middleware/)
 ├── helm/              Helm chart
 ├── argocd/            ArgoCD Application and AppProject
-├── terraform/         1.vpc.tf + 2.rds.tf; the rest in terraform/parked/
+├── terraform/         all AWS infrastructure, 7 numbered files
 ├── .github/           CI/CD, Dependabot, CODEOWNERS
 ├── docs/              This documentation
 ├── scripts/           Development and operational scripts
@@ -240,11 +240,14 @@ stops any pod in the cluster from assuming an application role.
 ```
 .github/
 ├── workflows/
-│   ├── ci-frontend.yml      test + build, lint the chart
-│   ├── ci-backend.yml       Java + Python tests, charts, terraform validate
-│   ├── deploy-frontend.yml  build → ECR → helm upgrade
-│   ├── deploy-backend.yml   both images → ECR → helm upgrade
-│   └── security.yml         GitLeaks, Trivy (fs + images), CodeQL
+│   ├── ci-frontend.yml        test + build, lint the chart
+│   ├── ci-middleware.yml      mvn verify, lint the chart
+│   ├── ci-ai-service.yml      ruff + mypy + pytest, lint the chart
+│   ├── ci-terraform.yml       fmt + validate
+│   ├── deploy-frontend.yml    build → ECR → helm upgrade
+│   ├── deploy-middleware.yml  one per service, so one never redeploys another
+│   ├── deploy-ai-service.yml
+│   └── security.yml           GitLeaks, Trivy (fs + images), CodeQL
 ├── dependabot.yml      Five ecosystems, grouped
 ├── CODEOWNERS
 └── pull_request_template.md
