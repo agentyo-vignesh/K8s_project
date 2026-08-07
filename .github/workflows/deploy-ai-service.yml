@@ -87,6 +87,9 @@ jobs:
       - name: Get cluster credentials
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER"
 
+      # --atomic = --wait plus an automatic rollback if the pods never become
+      # ready. Without it a failed rollout leaves the broken release running and
+      # only the workflow turns red.
       - name: Deploy
         id: deploy
         env:
@@ -97,9 +100,6 @@ jobs:
             --set imageRegistry="$REGISTRY" \
             --set imageTag="$SHA" \
             --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-ai-service" \
-            # atomic = wait, and roll back automatically if the pods never
-            # become ready. Without it a failed rollout leaves the broken
-            # release in place and only the workflow turns red.
             --atomic --timeout 5m
 
       # --atomic only catches "the pods never became ready". A pod can be

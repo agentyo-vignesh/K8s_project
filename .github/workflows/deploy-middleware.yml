@@ -99,6 +99,9 @@ jobs:
       # If a migration in this release adds or changes an ai_* table, deploy
       # this first and let it finish before deploying the AI service - Flyway
       # owns those tables.
+      # --atomic = --wait plus an automatic rollback if the pods never become
+      # ready. Without it a failed rollout leaves the broken release running and
+      # only the workflow turns red.
       - name: Deploy
         id: deploy
         env:
@@ -109,9 +112,6 @@ jobs:
             --set imageRegistry="$REGISTRY" \
             --set imageTag="$SHA" \
             --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-middleware" \
-            # atomic = wait, and roll back automatically if the pods never
-            # become ready. Without it a failed rollout leaves the broken
-            # release in place and only the workflow turns red.
             --atomic --timeout 8m
 
       # --atomic only catches "the pods never became ready". A pod can be
