@@ -107,20 +107,21 @@ jobs:
       - name: Lint
         run: |
           REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
+          ROLE=arn:aws:iam::000000000000:role/ci
           for c in platform middleware ai-service; do
             echo "--- $c"
-            helm lint ./helm/$c --set imageRegistry=$REG --set imageTag=ci
+            helm lint ./helm/$c --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE
           done
 
       # Placeholder values - nothing here talks to AWS
       - name: Render
         run: |
           REG=000000000000.dkr.ecr.ap-south-1.amazonaws.com
-          DB=ci-placeholder.rds.amazonaws.com
+          ROLE=arn:aws:iam::000000000000:role/ci
 
           helm template ci ./helm/platform                                             > rendered.yaml
-          helm template ci ./helm/middleware --set imageRegistry=$REG --set imageTag=ci >> rendered.yaml
-          helm template ci ./helm/ai-service --set imageRegistry=$REG --set imageTag=ci >> rendered.yaml
+          helm template ci ./helm/middleware --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE >> rendered.yaml
+          helm template ci ./helm/ai-service --set imageRegistry=$REG --set imageTag=ci --set aws.roleArn=$ROLE >> rendered.yaml
 
       # Writes into the workspace, not /tmp: a docker:// action only
       # mounts the workspace, so a file in /tmp is invisible to it.

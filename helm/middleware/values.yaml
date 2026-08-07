@@ -11,7 +11,10 @@ replicas: 1
 # The pod reads its own secrets from AWS. There is no Kubernetes Secret, and no
 # password is passed to Helm.
 #
-# roleArn comes from: terraform output -raw middleware_role_arn
+# No default. An empty annotation means the webhook injects no token, and
+# the pod dies at startup with "Unable to load credentials from any of the
+# providers in the chain" - which reads like a code bug, not a missing flag.
+# Get it from: terraform output -raw middleware_role_arn
 aws:
   roleArn: ""
   region: ap-south-1
