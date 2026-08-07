@@ -251,7 +251,6 @@ stops any pod in the cluster from assuming an application role.
 │   ├── ci-frontend.yml        test + build, lint the chart
 │   ├── ci-middleware.yml      mvn verify, lint the chart
 │   ├── ci-ai-service.yml      ruff + mypy + pytest, lint the chart
-│   ├── ci-terraform.yml       fmt + validate
 │   ├── deploy-frontend.yml    build → ECR → helm upgrade
 │   ├── deploy-middleware.yml  one per service, so one never redeploys another
 │   ├── deploy-ai-service.yml

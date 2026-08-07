@@ -159,13 +159,18 @@ files change.
 | `ci-frontend.yml` | `frontend/**`, `helm/frontend/**` | lint, test, build; lint + render the chart |
 | `ci-middleware.yml` | `middleware/**`, `helm/middleware/**` | `mvn verify`; chart checks |
 | `ci-ai-service.yml` | `backend/**`, `helm/ai-service/**` | ruff, mypy, pytest; chart checks |
-| `ci-terraform.yml` | `terraform/**` | `fmt -check` and `validate` |
 | `deploy-*.yml` | push to `main` | build image → push to ECR → `helm upgrade` |
 | `security.yml` | PR, nightly | GitLeaks, Trivy, CodeQL |
 
 One CI and one deploy per service, so a change to one never rebuilds another.
 That matters most for the middleware: its rollout is `Recreate`, so an
 unnecessary redeploy costs about 40 seconds of API downtime.
+
+**These pipelines deploy application code, not infrastructure.** Terraform is
+run by hand - see [terraform/README.md](terraform/README.md). A CI job could
+run `fmt -check` and `validate`, but without AWS credentials it cannot run
+`plan`, so it would never answer the question that matters: what does this
+change destroy? `terraform plan` answers that, locally, before you apply.
 
 **CI never touches AWS.** It only answers "is the code good?" — no credentials,
 no cluster access. The deploy workflows are the only ones that authenticate, and
