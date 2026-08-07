@@ -14,10 +14,12 @@
 #   ├── Pvt-Subnet-1  10.0.2.0/24   ap-south-1a  → NAT
 #   └── Pvt-Subnet-2  10.0.3.0/24   ap-south-1b  → NAT
 #
-# No EKS cluster, no RDS, no load balancer, no ECR, no IAM roles. Those are
-# created by hand afterwards — see docs/DEVOPS_PHASES.md Stage 1.2 onwards. The
-# other .tf files in this directory hold the codified versions of them and are
-# fully commented out (see README.md).
+# This file is the network only. 2.eks.tf through 7.github.tf build the rest, and
+# all of it applies together — the numbers are for humans, Terraform derives the
+# real order from the references between resources.
+#
+# This file also carries the terraform{} and provider{} blocks for the whole
+# directory, because they have to live somewhere and this is what gets read first.
 # =============================================================================
 
 terraform {
@@ -123,8 +125,9 @@ resource "aws_subnet" "Pub-Subnet-2" {
 #
 # /24 gives 251 usable IPs per subnet. The VPC CNI assigns every pod a real VPC
 # IP, so that is the pod ceiling per subnet. Nowhere near binding here: t3.small
-# nodes cap out at 11 pods each. The binding limit is the account vCPU quota, not
-# addresses — see docs/EKS_CREATION.md section 5.
+# nodes cap out at 11 pods each. The binding limit is the account vCPU quota
+# (L-1216C47A), not addresses - a node group that will not scale is usually that,
+# and it surfaces only in the ASG StatusMessage.
 # -----------------------------------------------------------------------------
 resource "aws_subnet" "Pvt-Subnet-1" {
   vpc_id            = aws_vpc.my-vpc.id
@@ -252,7 +255,7 @@ resource "aws_route_table_association" "Pvt-Route-Table-Association-2" {
 }
 
 # -----------------------------------------------------------------------------
-# Outputs — feed the RDS commands in docs/DEVOPS_PHASES.md
+# Outputs — consumed by scripts/bootstrap.sh
 #
 # There is no eksctl_command output any more. 2.eks.tf creates the cluster, so
 # running eksctl would collide on the name or build a second one.

@@ -198,7 +198,10 @@ resource "aws_eks_node_group" "default" {
   ]
 
   lifecycle {
-    # The cluster autoscaler owns desired_size once it is running.
+    # Whoever scales the group owns desired_size, not Terraform. No autoscaler is
+    # installed yet, so today this guards a manual `eks update-nodegroup-config`.
+    # Without it, the next apply would drag the count back to 2 and the one after
+    # that would show the same diff again.
     ignore_changes = [scaling_config[0].desired_size]
   }
 }

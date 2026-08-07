@@ -45,8 +45,8 @@ Rules:
 
 `V3` inserts demo accounts with known passwords. It is fine for dev and for a
 training cluster; it is not fine for anything holding real data. To skip it, set
-`FLYWAY_ENABLED=false` on the middleware and apply `V1`/`V2` with the Helm
-migration Job described in [`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md).
+`FLYWAY_ENABLED=false` on the middleware and apply `V1`/`V2` yourself before the
+first deploy.
 
 ## Schema shape
 
@@ -79,6 +79,7 @@ docker compose exec postgres psql -U ai_interview_app -d ai_interview \
   -c "SELECT version, description, success, installed_on FROM flyway_schema_history ORDER BY installed_rank;"
 ```
 
-Credentials come from `.env` locally and from AWS Secrets Manager on EKS — see
-[`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md). There is no connection string in
-any configuration file in this repository.
+Credentials come from `.env` locally and, on EKS, from AWS Secrets Manager read by
+the pod itself over IRSA — see [`../CLAUDE.md`](../CLAUDE.md). There is no
+connection string in any configuration file in this repository, and no Kubernetes
+Secret in the namespace.

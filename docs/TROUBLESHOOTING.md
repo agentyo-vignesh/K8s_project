@@ -65,14 +65,21 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name "$ASG" \
 | `InsufficientInstanceCapacity` | That AZ is out of that type |
 | `does not have enough free addresses` | Subnet CIDR exhausted |
 
-Full walkthrough and fixes:
-[EKS_CREATION.md §8.5](EKS_CREATION.md#85-nodegroup-stuck-in-creating-the-important-one).
+`StatusMessage` is the only place the real reason appears. `health.issues: []` on
+the node group stays empty while the failure is still in the ASG.
 
 **Nodes `Ready` but every pod is `ImagePullBackOff`** is the neighbouring failure.
 Private nodes reach ECR through the NAT gateway; if the NAT was deleted or
 recreated after the route table was written, the route points at a gateway id that
-no longer exists — see
-[EKS_CREATION.md §8.7](EKS_CREATION.md#87-nodes-ready-but-pods-stay-imagepullbackoff).
+no longer exists. Check that the private route table's `0.0.0.0/0` target matches
+the current NAT:
+
+```bash
+aws ec2 describe-nat-gateways --region ap-south-1 \
+  --query 'NatGateways[?State==`available`].NatGatewayId'
+aws ec2 describe-route-tables --region ap-south-1 \
+  --query 'RouteTables[].Routes[?DestinationCidrBlock==`0.0.0.0/0`].NatGatewayId'
+```
 
 ---
 

@@ -172,40 +172,43 @@ though two services share the database.
 
 ---
 
-## `helm/ai-interview-platform/`
+## `helm/`
+
+One chart per service, plus `platform` for the things that are not any one
+service's. No umbrella chart and no dev/prod overlays: a student can read a whole
+chart in a sitting, and deploying one service cannot disturb another.
 
 ```
-├── Chart.yaml
-├── values.yaml         Defaults (dev-shaped)
-├── values-dev.yaml      In-cluster DB, 1 replica, mock AI, Swagger on
-├── values-prod.yaml     RDS, IRSA, S3, HPA, ServiceMonitors, Swagger off
-└── templates/
-    ├── _helpers.tpl              Naming, labels, image refs, DB resolution
-    ├── configmap.yaml            Non-secret config for both services
-    ├── secret.yaml               Dev only; not rendered in prod
-    ├── serviceaccount.yaml       IRSA annotations
-    ├── {frontend,middleware,ai-service}-deployment.yaml
-    ├── services.yaml
-    ├── postgresql.yaml           Dev-only StatefulSet
-    ├── pvc.yaml                  Local storage backend only
-    ├── hpa.yaml, pdb.yaml, ingress.yaml
-    ├── networkpolicy.yaml        Default-deny + explicit allows
-    ├── servicemonitor.yaml       ServiceMonitor + PrometheusRule
-    └── NOTES.txt                 Post-install output with config warnings
+helm/
+├── platform/       StorageClass (gp3, default) + the ALB Ingress
+├── frontend/       configmap, deployment + service
+├── middleware/     configmap, deployment + service, pvc, serviceaccount
+└── ai-service/     configmap, deployment + service, serviceaccount
 ```
 
-Verified with `helm lint` and `helm template` against all three value sets. Prod
-renders 20 objects and **no Secret** — credentials come from Secrets Manager at
-runtime, so nothing sensitive appears in a manifest or in ArgoCD.
+**No Secret object anywhere.** Each pod reads Secrets Manager itself over IRSA,
+so no amount of RBAC in the namespace exposes the database password.
+
+`platform` installs in two stages, because its two objects want opposite
+orderings: the StorageClass has to exist before the middleware claims a volume,
+and the Ingress has to come after the Services it routes to. `scripts/bootstrap.sh`
+does this with `--set createIngress=false` first and `true` last.
+
+`imageTag` and `aws.roleArn` have no defaults and the templates refuse to render
+without them. Both were previously defaulted and both failed silently.
 
 ---
 
 ## `terraform/`
 
-Only the network and the database are codified. Everything else is created
-manually per [DEPLOYMENT.md](DEPLOYMENT.md). Nothing was deleted — the rest sits
-in `terraform/parked/`, documented in
+The whole stack, in one `terraform apply` — 62 resources. An older full-stack
+version sits in `terraform/parked/`, documented in
 [`../terraform/README.md`](../terraform/README.md).
+
+Two things are **not** in Terraform: the AWS Load Balancer Controller (its role
+comes from `eksctl create iamserviceaccount`, a CloudFormation stack) and the ALB
+and EBS volume that Kubernetes controllers create at runtime. That is why
+`terraform destroy` alone does not tear this down — see `scripts/teardown.sh`.
 
 ```
 terraform/
@@ -253,7 +256,8 @@ stops any pod in the cluster from assuming an application role.
 │   ├── deploy-frontend.yml    build → ECR → helm upgrade
 │   ├── deploy-middleware.yml  one per service, so one never redeploys another
 │   ├── deploy-ai-service.yml
-│   └── security.yml           Trivy (filesystem), CodeQL
+│   ├── security.yml           Trivy (filesystem), CodeQL
+│   └── sonarqube.yml          All three languages, one project, one gate
 ├── dependabot.yml      Patch and security updates only, monthly
 └── pull_request_template.md
 ```
@@ -273,11 +277,15 @@ a vulnerable image never reaches ECR.
 
 | Script | Purpose |
 |---|---|
+| `bootstrap.sh` | Empty account → running app, in the order that works |
+| `teardown.sh` | The reverse. Kubernetes first, Terraform last |
 | `dev-up.sh` | Build, start, **and wait for readiness** |
 | `dev-down.sh` | Stop; `--volumes` also wipes data |
+| `check-env.sh` | Refuses to start if the per-service env files disagree |
 | `build-images.sh` | Build/push all three with one shared tag |
 | `smoke-test.sh` | End-to-end assertions against a running stack |
 | `generate-secrets.sh` | Strong secrets; `--env`, `--helm`, `--aws` output |
+| `eks-auth-demo.ps1` | Walks the seven steps of an `aws eks get-token` login |
 
 ---
 
@@ -286,9 +294,9 @@ a vulnerable image never reaches ECR.
 | Task | Files |
 |---|---|
 | New API endpoint | `middleware/.../dto/`, `service/`, `web/controller/` |
-| New config value | `AppProperties` → `application.yml` → `configmap.yaml` → both values files |
+| New config value | `AppProperties` → `application.yml` → `configmap.yaml` → `values.yaml` |
 | Schema change | New `V<n>__` migration + JPA entity (+ SQLAlchemy model for `ai_*`) |
 | New AI provider | `backend/app/providers/` + `factory.py` + DB check constraint |
-| Resource limits | `helm/.../values-*.yaml` |
-| New AWS permission | `terraform/parked/iam.tf` |
+| Resource limits | `helm/<service>/templates/deployment.yaml` |
+| New AWS permission | `terraform/6.iam.tf` |
 | Pipeline change | `.github/workflows/` |

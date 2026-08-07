@@ -80,7 +80,7 @@ value that works locally and is missing in production:
 1. `AppProperties` — the typed field
 2. `application.yml` — `${ENV_VAR:default}`
 3. `helm/.../configmap.yaml` — the ConfigMap entry
-4. `values.yaml` **and** `values-dev.yaml`/`values-prod.yaml`
+4. `helm/<service>/values.yaml` — there are no dev/prod overlays; the deploy workflow supplies what differs
 
 Same for the AI service: `Settings` in `app/core/config.py`, then the chart.
 

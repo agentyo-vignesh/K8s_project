@@ -8,10 +8,10 @@
 # is already written in parked/ecr.tf if you ever want it.
 # =============================================================================
 
-# The prefix is "ai-interview-platform", NOT "ai-interview". The chart builds every
-# image as <global.imageRegistry>/<image.repository>:<tag>, and values.yaml sets
-# repository to ai-interview-platform/<service>. docs/DEVOPS_PHASES.md Stage 1.4
-# says ai-interview/<service>, which is wrong and shows up as ImagePullBackOff.
+# The prefix is "ai-interview-platform", NOT "ai-interview" - the cluster is named
+# ai-interview and the two are easy to confuse. Every chart builds its image as
+# <imageRegistry>/ai-interview-platform/<service>:<tag>, so a repository created
+# under the shorter name shows up as ImagePullBackOff and nothing else.
 resource "aws_ecr_repository" "app" {
   for_each = toset(["middleware", "ai-service", "frontend"])
 

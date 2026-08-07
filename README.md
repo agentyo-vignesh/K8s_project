@@ -49,7 +49,7 @@ Full instructions: [docs/SETUP.md](docs/SETUP.md).
 | Middleware | Spring Boot 3.3, Java 21, Spring Security, JWT, Spring Data JPA, Flyway, Actuator, Micrometer |
 | AI service | FastAPI, Pydantic v2, SQLAlchemy 2, OpenAI SDK behind an interface |
 | Database | PostgreSQL 16 |
-| Infrastructure | Docker, Kubernetes, Helm, Amazon EKS, Terraform, ArgoCD |
+| Infrastructure | Docker, Kubernetes, Helm, Amazon EKS, Terraform, GitHub Actions |
 
 ## Features
 
@@ -70,15 +70,18 @@ server-side so it cannot contradict its own breakdown.
 
 ## Running a session with it
 
-[docs/DEVOPS_PHASES.md](docs/DEVOPS_PHASES.md) is the running order: 18 phases in
-seven blocks, each one creating a single thing, verifying it with a command that
-must pass, and then deliberately breaking it so the failure is recognisable later.
+Two scripts bracket a session. Build the whole stack from an empty account, teach
+against it, then destroy it so the day costs about a dollar:
 
+```bash
+./scripts/bootstrap.sh      # empty account -> running app, about 35 minutes
+./scripts/teardown.sh       # the reverse
 ```
-A Understand  →  B Containers  →  C Kubernetes  →  D AWS
-                                                    ↓
-                        G Close  ←  F Operate  ←  E Automate
-```
+
+Read both before running either. The ordering inside them **is** the lesson:
+Kubernetes controllers create AWS resources that Terraform never sees, so
+`terraform apply` alone does not finish the job and `terraform destroy` alone
+cannot undo it.
 
 ## What makes it a DevOps teaching platform
 
@@ -181,48 +184,46 @@ role needs an EKS access entry or `helm upgrade` fails with
 
 ## Deploying to EKS
 
-All the AWS infrastructure is in Terraform, applied in one command:
-
 ```bash
-cd terraform && terraform apply     # VPC, EKS, RDS, ECR, Secrets Manager
-aws eks update-kubeconfig --region ap-south-1 --name ai-interview
+./scripts/bootstrap.sh
 ```
 
-Build and push the three images, then install one chart per service:
+That is the whole thing, and it is worth reading rather than just running,
+because four orderings in it are not obvious:
 
-```bash
-ECR=$(cd terraform && terraform output -raw docker_login)   # prints the login command
-RDS=$(cd terraform && terraform output -raw rds_endpoint)
+**Terraform is not the whole story.** It applies 62 resources in one command —
+VPC, EKS, RDS, ECR, Secrets Manager, the IRSA roles. It does **not** install the
+AWS Load Balancer Controller, whose IAM role comes from
+`eksctl create iamserviceaccount` as a CloudFormation stack.
 
-helm install platform   ./helm/platform   -n ai-interview --create-namespace
-helm install middleware ./helm/middleware -n ai-interview --set imageRegistry=$ECR --set db.host=$RDS
-helm install ai-service ./helm/ai-service -n ai-interview --set imageRegistry=$ECR --set db.host=$RDS
-helm install frontend   ./helm/frontend   -n ai-interview --set imageRegistry=$ECR
-```
+**The StorageClass must precede the middleware**, whose PVC would otherwise stay
+Pending forever — EKS ships no default StorageClass. **The Ingress must follow the
+Services**, because the controller builds the ALB from the Services its rules
+name. Those pull in opposite directions, so `helm/platform` is installed twice.
 
-`platform` goes first. It installs the StorageClass and an `ExternalSecret`,
-which pulls the database password out of AWS Secrets Manager and writes it into
-a Kubernetes Secret. No password is typed by hand or stored in a values file.
+**`middleware` before `ai-service`.** Flyway creates the `ai_*` tables the AI
+service reads.
 
-Install `middleware` before `ai-service`: Flyway creates the `ai_*` tables the
-AI service reads.
+**No password is passed to Helm, ever.** There is no Kubernetes Secret in the
+namespace. Each pod reads Secrets Manager itself over IRSA, so `imageTag` and
+`aws.roleArn` are the only values a deploy supplies — and neither has a default,
+because both once had one and both failed silently.
 
-Details: [terraform/README.md](terraform/README.md) and
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Details: [terraform/README.md](terraform/README.md) and [CLAUDE.md](CLAUDE.md).
 
 ## Documentation
 
 | Document | Covers |
 |---|---|
-| **[DEVOPS_PHASES.md](docs/DEVOPS_PHASES.md)** | **Session runbook — 18 phases, create → verify → break it** |
-| **[EKS_CREATION.md](docs/EKS_CREATION.md)** | **Standalone: creating the cluster by hand, with every real failure and its diagnosis** |
+| **[CLAUDE.md](CLAUDE.md)** | **Infrastructure, deployment, and the rules that are enforced in review** |
+| **[RBAC_VS_IRSA.md](docs/RBAC_VS_IRSA.md)** | **The two directions of cluster authorisation, verified against a live cluster** |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Diagrams, request flows, design decisions, known simplifications |
 | [SETUP.md](docs/SETUP.md) | Local development, running services natively |
 | [API.md](docs/API.md) | Endpoints, error format, pagination, roles |
 | [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Layering rules, testing, conventions |
-| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | EKS, Helm, ArgoCD, migrations, rollback |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Failure modes and deliberate exercises |
 | [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md) | Every directory and why |
+| [terraform/README.md](terraform/README.md) | The seven files, and what `parked/` is for |
 
 ## Security notes
 
@@ -230,12 +231,14 @@ The seed accounts above are created by Flyway migration `V3`, are documented in
 this README, and are allowlisted in `.gitleaks.toml`. **Delete or rotate them
 before deploying anywhere holding real data.**
 
-`values-prod.yaml` already sets `secrets.create: false` and
-`aws.secretsManager.enabled: true`, so in production nothing sensitive is rendered
-into a manifest, committed to Git, or visible to ArgoCD.
+**No Kubernetes Secret exists in the namespace.** Each pod reads Secrets Manager
+directly over IRSA, and its role's trust policy names one ServiceAccount, so no
+other pod can assume it. Nothing sensitive is rendered into a manifest, passed to
+Helm, or committed.
 
-The production checklist in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers the
-rest.
+**The ALB is HTTP only.** There is no domain, so there is no certificate. A JWT
+crosses the internet in clear text. That is acceptable for a training cluster and
+for nothing else.
 
 ## Licence
 

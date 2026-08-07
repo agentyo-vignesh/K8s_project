@@ -175,7 +175,7 @@ Three details make it a real control rather than a nominal one:
 | Refresh | Rotated on use; the presented token is revoked in the same transaction |
 | Authorization | `@PreAuthorize` per endpoint, plus query-level scoping for `CANDIDATE` |
 | Service-to-service | Shared internal API key, compared with `hmac.compare_digest` |
-| Transport | Ingress terminates TLS; S3 bucket policy denies non-TLS requests |
+| Transport | **HTTP only.** The ALB has no certificate - there is no domain to issue one for. A JWT crosses the internet in clear text, so this is a training cluster and nothing else |
 | Containers | Non-root uid 10001, read-only root filesystem, all capabilities dropped |
 
 **Why a revocation table rather than pure stateless JWT.** Logout has to take
@@ -271,8 +271,8 @@ Honest about what this is not:
 | One database shared by two services | One migration authority; avoids a deployment ordering contract | A database per service |
 | `frontend.apiBaseUrl` read at runtime from `window.__APP_CONFIG__` | One image promoted across environments | Same — this one is genuinely correct |
 | Seed data in `V3` with known passwords | A populated demo on first start | Skip the migration; provision accounts out of band |
-| In-cluster PostgreSQL StatefulSet available | `helm install` works with no AWS account | RDS only (`values-prod.yaml` already does this) |
-| Local disk storage backend | Compose works with no S3 | S3 (`values-prod.yaml` already does this) |
+| In-cluster PostgreSQL StatefulSet available | Compose works with no AWS account | On EKS it is RDS only; the chart has no StatefulSet |
+| Local disk storage backend | Compose works with no S3 | S3 — `S3FileStorageService` exists, and switching to it also removes the ReadWriteOnce volume that forces `Recreate` |
 | No distributed tracing | Request-id correlation is enough at three services | OpenTelemetry spans across the hop |
 | No rate limiting | Out of scope for the training goal | Ingress-level or a token bucket per principal |
 
@@ -280,5 +280,7 @@ Honest about what this is not:
 
 - [SETUP.md](SETUP.md) — run it locally
 - [API.md](API.md) — endpoint reference
-- [DEPLOYMENT.md](DEPLOYMENT.md) — EKS, Helm, ArgoCD
+- [FOLDER_STRUCTURE.md](FOLDER_STRUCTURE.md) — what lives where
+- [RBAC_VS_IRSA.md](RBAC_VS_IRSA.md) — the two directions of cluster authorisation
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — failure modes and how to diagnose them
+- [`../CLAUDE.md`](../CLAUDE.md) — infrastructure, deployment and the conventions

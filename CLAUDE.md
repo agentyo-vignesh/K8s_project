@@ -15,11 +15,22 @@ Two consequences that shape everything:
   is excluded from the middleware's readiness group. The AI call runs outside any transaction. Bad config
   fails at startup. If a change makes one of these "cleaner", it breaks the teaching value — check
   `docs/TROUBLESHOOTING.md` before altering health, transactions or startup validation.
-- **`docs/DEVOPS_PHASES.md` and `docs/DEPLOYMENT.md` describe an earlier design** - manual `eksctl`, one
-  umbrella chart, ArgoCD. None of that is how this repository works now. Trust `terraform/`, `helm/` and
-  `.github/workflows/` over those two documents.
+- **A limitation that is visible teaches more than one that is hidden.** The middleware deploys with
+  `Recreate` and takes ~40 seconds of downtime, because its volume is ReadWriteOnce. Moving file storage
+  to S3 would fix that — `S3FileStorageService` already exists — and the fix is deliberately left undone
+  so the cost of a storage decision is something a student can watch happen.
 
 ## Commands
+
+### The cluster
+
+```bash
+./scripts/bootstrap.sh       # empty account -> running app, ~35 min, ~USD 178/month while it runs
+./scripts/teardown.sh        # the reverse; a bare `terraform destroy` does NOT work
+```
+
+Read the header comment in each before running them. Neither is a convenience wrapper — the orderings
+they encode are the reason a plain `terraform apply` / `destroy` pair fails.
 
 ### Local stack (preferred entry point)
 
@@ -40,6 +51,11 @@ Two consequences that shape everything:
 | `frontend/` | `npm run test -- --run` (20 Vitest) | `npm run lint` (`--max-warnings 0`) | `npx vitest run src/<path>.test.jsx` |
 
 Requires JDK 21 and Maven on PATH — there is no Maven wrapper.
+
+SonarQube analyses all three as **one** project, so a regression in one cannot hide behind healthy numbers
+in another. It reads three coverage reports that only exist if you ask for them: `mvn verify` (JaCoCo),
+`pytest --cov-report=xml`, and `npm run test:coverage`. A missing report is not an error — Sonar just
+reports 0%, which reads like a code problem rather than a build one.
 
 ### Before opening a PR
 
@@ -202,7 +218,20 @@ the chain". See the comment beside that dependency in `middleware/pom.xml`.
 
 ### Deploying
 
-One chart per service plus `platform` for the default StorageClass. Install `platform` first.
+One chart per service, plus `platform` for the StorageClass and the ALB Ingress. `scripts/bootstrap.sh`
+does the whole sequence; the manual form is below.
+
+**`platform` is installed twice**, because its two objects want opposite orderings: the StorageClass has
+to exist before the middleware claims a volume, and the Ingress has to come after the Services its rules
+name — the controller will not build an ALB for a backend that does not resolve. So: `platform` with
+`--set createIngress=false`, then the three services, then `platform` with `createIngress=true`.
+
+The Ingress routes `/api` to the middleware and `/` to the frontend, which is what makes the frontend's
+`apiBaseUrl: ""` (same-origin) correct. `/actuator` is deliberately **not** routed — it exposes `metrics`
+and `prometheus`. The ALB health check reaches the pod directly, so it needs no rule; the middleware
+Service carries its own `alb.ingress.kubernetes.io/healthcheck-path` annotation, which overrides the
+Ingress-level one for its own target group. Without that override every middleware target is unhealthy
+and `/api` answers 503.
 
 ```bash
 helm upgrade --install middleware ./helm/middleware -n ai-interview   --set imageRegistry=<account>.dkr.ecr.ap-south-1.amazonaws.com   --set imageTag=<commit sha>   --set aws.roleArn=$(terraform output -raw middleware_role_arn)
@@ -216,6 +245,26 @@ The middleware rollout is `Recreate` — its volume is ReadWriteOnce, so the old
 That is why each service has its own deploy workflow: an AI-service change must not cost the middleware
 40 seconds of downtime.
 
+## Known gaps
+
+Written down because a gap that is documented is a lesson, and one that is discovered mid-session is an
+interruption. Do not "fix" these silently — several are load-bearing.
+
+**No observability at all.** No metrics-server, so `kubectl top` and every HPA are unavailable. No
+Prometheus, no log collection. `kube-prometheus-stack` wants ~2.5 GB and the node group is 2 × t3.small,
+so it does not fit without moving to t3.medium. metrics-server is ~50 MB and does fit.
+
+**`2.eks.tf` mentions a cluster autoscaler that is not installed.** The `ignore_changes` on
+`desired_size` is correct in principle and currently guards nothing.
+
+**HTTP only.** No domain, so no certificate. A JWT crosses the internet in clear text.
+
+**Terraform state is local and unlocked.** No backend block. Fine for one operator, wrong for a team —
+which is the point at which to teach an S3 backend.
+
+**Frontend coverage is 8%.** Two test files, no page or hook tested. Left as the exercise SonarQube now
+makes visible.
+
 ## Conventions
 
 **Java** — records for DTOs, classes for entities. Constructor injection only. `Optional` for return
@@ -228,8 +277,9 @@ crossing the wire. Narrow with `isinstance` rather than casting.
 MUI `sx`, no stylesheets. A helper named `useX` **is** a hook.
 
 **Logging** — structured, never concatenated. `logger.info("...", extra={"setId": str(id)})`; the JSON
-formatter promotes `extra` keys to top-level fields so they are queryable in Loki. Every response carries
-`X-Request-Id`, emitted by both services, so one id spans both logs.
+formatter promotes `extra` keys to top-level fields. Every response carries `X-Request-Id`, emitted by
+both services, so one id spans both logs — **once something collects them.** Nothing does yet; see the
+gap below.
 
 **Tests** — test decisions, not accessors. `InterviewStatusTest` (state machine),
 `StorageKeyFactoryTest` (path traversal), `JwtServiceTest` (token type confusion, both directions) are the
