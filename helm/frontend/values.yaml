@@ -8,5 +8,22 @@ imageTag: ""
 
 replicas: 1
 
-# Empty = call the API on the same host
+# Where the browser sends /api requests. Read at container start and written
+# into window.__APP_CONFIG__, so one image works in every environment.
+#
+# Empty means same-origin, which is correct ONLY once an Ingress routes /api to
+# the middleware. There is no Ingress yet, and nginx.conf has no /api location -
+# so today a same-origin call falls through to the SPA rewrite and comes back as
+# index.html with HTTP 200. The app then fails parsing HTML as JSON, which looks
+# like an application bug rather than missing routing.
+#
+# To try the app before the Ingress exists, port-forward both services and point
+# the frontend at the middleware:
+#
+#   kubectl port-forward -n ai-interview svc/middleware 8080:8080
+#   kubectl port-forward -n ai-interview svc/frontend   3000:80
+#   helm upgrade frontend ./helm/frontend ... --set apiBaseUrl=http://localhost:8080
+#
+# localhost, not the Service name: the browser runs outside the cluster and
+# cannot resolve http://middleware:8080.
 apiBaseUrl: ""
