@@ -33,5 +33,9 @@ autoscaling:
 aws:
   roleArn: ""
   region: ap-south-1
-  databaseSecretId: ai-interview/prod/database
-  applicationSecretId: ai-interview/prod/application
+  # No default, for the same reason imageTag and roleArn have none. This said
+  # "ai-interview/prod/..." and no caller ever overrode it, so every deploy asked
+  # for prod's secrets - and the IRSA role, correctly scoped to its own
+  # environment, answered AccessDenied. The role was right; the request was wrong.
+  databaseSecretId: ""
+  applicationSecretId: ""

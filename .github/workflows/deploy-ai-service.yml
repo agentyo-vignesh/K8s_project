@@ -107,6 +107,9 @@ jobs:
             --set imageRepository="$PROJECT-$ENVIRONMENT-platform" \
             --set imageTag="$SHA" \
             --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/$PROJECT-$ENVIRONMENT-ai-service" \
+            --set aws.region="$AWS_REGION" \
+            --set aws.databaseSecretId="$PROJECT/$ENVIRONMENT/database" \
+            --set aws.applicationSecretId="$PROJECT/$ENVIRONMENT/application" \
             --atomic --timeout 5m
 
       # --atomic only catches "the pods never became ready". A pod can be

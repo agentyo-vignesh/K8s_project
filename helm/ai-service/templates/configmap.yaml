@@ -10,8 +10,8 @@ data:
   # aws, not env: the app reads Secrets Manager itself using its IAM role.
   # Note the names differ from the middleware's - two codebases.
   SECRETS_PROVIDER: aws
-  AWS_DATABASE_SECRET_ID: "{{ .Values.aws.databaseSecretId }}"
-  AWS_APPLICATION_SECRET_ID: "{{ .Values.aws.applicationSecretId }}"
+  AWS_DATABASE_SECRET_ID: "{{ required "aws.databaseSecretId is required - pass --set aws.databaseSecretId=<project>/<env>/..." .Values.aws.databaseSecretId }}"
+  AWS_APPLICATION_SECRET_ID: "{{ required "aws.applicationSecretId is required - pass --set aws.applicationSecretId=<project>/<env>/..." .Values.aws.applicationSecretId }}"
   AWS_REGION: "{{ .Values.aws.region }}"
 
   DB_SSLMODE: require

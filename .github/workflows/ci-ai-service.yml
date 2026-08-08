@@ -71,14 +71,17 @@ jobs:
         with:
           version: v3.16.3
 
-      # lint renders with the values given here. The chart defaults leave
-      # imageTag and roleArn empty on purpose.
+      # lint renders with the values given here. Every one of them is `required`
+      # in the chart, so the defaults leave them empty on purpose and lint would
+      # otherwise fail on the malformed output rather than on anything real.
       - name: Lint
         run: |
           helm lint ./helm/ai-service \
             --set imageRegistry=000000000000.dkr.ecr.ap-south-1.amazonaws.com \
             --set imageTag=ci \
-            --set aws.roleArn=arn:aws:iam::000000000000:role/ci
+            --set aws.roleArn=arn:aws:iam::000000000000:role/ci \
+            --set aws.databaseSecretId=ci/db \
+            --set aws.applicationSecretId=ci/app
 
       - name: Render
         run: |
@@ -86,6 +89,8 @@ jobs:
             --set imageRegistry=000000000000.dkr.ecr.ap-south-1.amazonaws.com \
             --set imageTag=ci \
             --set aws.roleArn=arn:aws:iam::000000000000:role/ci \
+            --set aws.databaseSecretId=ci/db \
+            --set aws.applicationSecretId=ci/app \
             > rendered.yaml
 
       - name: Validate against Kubernetes schemas
