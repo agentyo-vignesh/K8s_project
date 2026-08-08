@@ -92,6 +92,11 @@ if [ "$CLUSTER_REACHABLE" = yes ]; then
     || echo "   no iamserviceaccount to delete"
 fi
 
+# The observability namespace deliberately needs no step of its own. Prometheus,
+# Grafana, Loki and Alloy own nothing outside the cluster: persistence is off in
+# every one of them and Grafana is a ClusterIP, so there is no EBS volume and no
+# second load balancer to release. They disappear with the cluster.
+
 # ------------------------------------------------------------ 4. everything else
 say "4/6 terraform destroy - roughly 20 minutes"
 terraform -chdir="$TF_DIR" destroy -auto-approve

@@ -172,9 +172,20 @@ resource "aws_eks_node_group" "default" {
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = [aws_subnet.Pvt-Subnet-1.id, aws_subnet.Pvt-Subnet-2.id]
 
-  ami_type       = "AL2023_x86_64_STANDARD"
-  capacity_type  = "ON_DEMAND"
-  instance_types = ["t3.small"]
+  ami_type      = "AL2023_x86_64_STANDARD"
+  capacity_type = "ON_DEMAND"
+
+  # t3.medium, not t3.small, for one reason: the observability stack.
+  #
+  # t3.small gives ~1.6 GiB allocatable after the kubelet and system reservation.
+  # Two of them hold the application (832 MiB of requests), the load balancer
+  # controller and the addons with ~1.8 GiB spare. Prometheus, Grafana and Loki
+  # want roughly 1.6 GiB between them, which fits only with nothing left over -
+  # and the first pod to grow gets something else evicted.
+  #
+  # The cluster is created and destroyed around each session, so this is not a
+  # monthly cost: it is about +USD 0.045/hour, or 18 cents on a four-hour class.
+  instance_types = ["t3.medium"]
 
   scaling_config {
     desired_size = 2
@@ -210,7 +221,8 @@ resource "aws_eks_node_group" "default" {
 # Addons — vpc_cni and kube_proxy before nodes, coredns and ebs_csi after
 # -----------------------------------------------------------------------------
 
-# Prefix delegation lifts the pod ceiling on t3.small from 11 to ~110.
+# Prefix delegation lifts the pod ceiling on t3.medium from 17 to ~110. The
+# observability stack alone is nine pods, so the default ceiling is not academic.
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "vpc-cni"
@@ -247,6 +259,21 @@ resource "aws_eks_addon" "ebs_csi" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "aws-ebs-csi-driver"
   service_account_role_arn    = aws_iam_role.ebs_csi.arn
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.default]
+}
+
+# EKS ships no metrics-server, and without it `kubectl top` returns "Metrics API
+# not available" and every HorizontalPodAutoscaler sits at <unknown>/70% forever
+# without ever saying why.
+#
+# It is an addon rather than a Helm release because it belongs to the cluster
+# rather than to the application, and because the version then tracks the cluster.
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "metrics-server"
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
 

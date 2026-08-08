@@ -1,0 +1,31 @@
+{{- if .Values.autoscaling.enabled }}
+# Scales on CPU, which only works because the container declares a CPU request.
+# Utilisation is measured against the request, so with no request there is
+# nothing to be a percentage of and the HPA sits at <unknown> indefinitely.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-service
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPU }}
+
+  behavior:
+    scaleDown:
+      # Default is 300s. Five minutes of waiting is correct in production - it
+      # stops a service flapping on a brief dip - and far too long to show a
+      # class, who conclude it is broken. 60s so scale-down happens while
+      # someone is still watching.
+      stabilizationWindowSeconds: 60
+{{- end }}

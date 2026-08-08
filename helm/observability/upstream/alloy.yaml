@@ -1,0 +1,95 @@
+# Values for grafana/alloy - the agent that ships pod logs into Loki.
+#
+# Alloy rather than Promtail: Promtail reached end of life in March 2026 and
+# Alloy is what Grafana ships now. Teaching a retired agent is worse than
+# teaching a slightly longer config.
+
+controller:
+  # A Deployment with one replica, not a DaemonSet.
+  #
+  # The usual log agent is a DaemonSet because it reads /var/log/pods off the
+  # node's own disk, so it has to be on every node. This config tails through
+  # the Kubernetes API instead, so there is nothing node-local to be near - and
+  # no hostPath mount, no privileged container. On a five-pod cluster the API
+  # load is irrelevant; at hundreds of pods you would go back to the DaemonSet.
+  type: deployment
+  replicas: 1
+
+alloy:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  configMap:
+    content: |-
+      // Find every pod in the cluster.
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // Turn Kubernetes metadata into Loki labels. Only these four - see the
+      // note on cardinality below.
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app"]
+          target_label  = "app"
+        }
+      }
+
+      // Tail via the API rather than the node filesystem.
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.pods.receiver]
+      }
+
+      loki.process "pods" {
+        // Both services log structured JSON, so the fields are already there.
+        stage.json {
+          expressions = {
+            level     = "level",
+            requestId = "requestId",
+          }
+        }
+
+        // level becomes a label: a handful of values, so a handful of streams.
+        stage.labels {
+          values = { level = "" }
+        }
+
+        // requestId is deliberately NOT a label.
+        //
+        // A Loki label creates one stream per distinct value. requestId is
+        // unique per request, so labelling it would create a stream per request
+        // and the index would grow without bound - the same mistake as putting
+        // an interview id in a Prometheus metric label.
+        //
+        // It stays in the log line, and Loki still finds it:
+        //   {namespace="ai-interview"} |= "d2b220a2-5b62-4422"
+        // That one query spans the middleware and the AI service, which is the
+        // reason X-Request-Id exists.
+
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }

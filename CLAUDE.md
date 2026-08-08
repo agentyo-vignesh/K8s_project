@@ -185,7 +185,7 @@ the real order from the dependency graph.
 ```
 terraform/
 ├── 1.vpc.tf       VPC 10.0.0.0/16, 2 public + 2 private subnets, IGW, NAT
-├── 2.eks.tf       cluster, node group, OIDC provider, 4 addons, EBS CSI IRSA role
+├── 2.eks.tf       cluster, node group (t3.medium), OIDC provider, 5 addons, EBS CSI IRSA role
 ├── 3.rds.tf       PostgreSQL 16.14, private subnets, SG referencing the cluster SG
 ├── 4.ecr.tf       three repositories
 ├── 5.secrets.tf   two Secrets Manager secrets, in the exact shape the apps parse
@@ -245,17 +245,60 @@ The middleware rollout is `Recreate` — its volume is ReadWriteOnce, so the old
 That is why each service has its own deploy workflow: an AI-service change must not cost the middleware
 40 seconds of downtime.
 
+### Observability
+
+Both services were already instrumented — `micrometer-registry-prometheus` on the middleware, exposing
+`/actuator/prometheus`, and `prometheus-client` on the AI service, exposing `/metrics`. Nothing needed to
+change in either application.
+
+```
+namespace observability     kube-prometheus-stack 88.2.0   Prometheus, Grafana, Alertmanager
+                            loki 7.2.0                     SingleBinary, filesystem
+                            alloy 1.11.1                   tails pod logs into Loki
+namespace ai-interview      helm/observability             our two ServiceMonitors
+cluster addon               metrics-server                 in 2.eks.tf
+```
+
+Values for the three upstream charts live in `helm/observability/upstream/`. `helm/observability` itself
+holds only the ServiceMonitors, and installs **last** — the `ServiceMonitor` kind does not exist until the
+Prometheus Operator has created the CRD.
+
+**Four things fail silently here, and all four are in the comments:**
+
+- `serviceMonitorSelectorNilUsesHelmValues` defaults to `true`, which means "only ServiceMonitors with my
+  release label". Ours come from a different chart, so the default makes Prometheus ignore them with no
+  error at all — the targets page is just empty.
+- A ServiceMonitor's `selector` matches the labels of the **Service**, not of the pods. Both Services
+  carry `app:` labels for exactly this.
+- `endpoints[].port` is the Service port **name**. Both Service ports are named `http` for this reason; an
+  unnamed port scrapes nothing.
+- Loki's `chunksCache` and `resultsCache` default to enabled, and each is a memcached asking for ~9 GB.
+  On any small cluster they sit `Pending` and nothing identifies Loki as the cause.
+
+`requestId` is extracted from the log line but deliberately **not** made a Loki label — it is unique per
+request, so labelling it would create one stream per request. It is still searchable:
+`{namespace="ai-interview"} |= "<request-id>"`, and that one query spans both services.
+
+The node group is `t3.medium` rather than `t3.small` **because of this stack**. Requests total ~2.5 GiB
+against ~7 GiB allocatable. On `t3.small` the same total leaves ~700 MiB, which Prometheus's own limit
+would exhaust on its own.
+
+The `ai-service` HPA is the reason metrics-server is installed, and its Deployment omits `replicas`
+entirely when autoscaling is on. Leave both in and each `helm upgrade` resets what the HPA decided — the
+same conflict `ignore_changes = [desired_size]` solves in `2.eks.tf`. The middleware has no HPA: its
+volume is ReadWriteOnce, so a second replica could never attach it.
+
 ## Known gaps
 
 Written down because a gap that is documented is a lesson, and one that is discovered mid-session is an
 interruption. Do not "fix" these silently — several are load-bearing.
 
-**No observability at all.** No metrics-server, so `kubectl top` and every HPA are unavailable. No
-Prometheus, no log collection. `kube-prometheus-stack` wants ~2.5 GB and the node group is 2 × t3.small,
-so it does not fit without moving to t3.medium. metrics-server is ~50 MB and does fit.
+**No cluster autoscaler.** `2.eks.tf` ignores changes to `desired_size`, which is right in principle but
+currently only guards a manual `eks update-nodegroup-config`. The pod-level HPA works; the node count does
+not follow it, so `maxReplicas` is bounded by what two nodes hold.
 
-**`2.eks.tf` mentions a cluster autoscaler that is not installed.** The `ignore_changes` on
-`desired_size` is correct in principle and currently guards nothing.
+**No tracing.** Both services emit `X-Request-Id` and Loki can search it, but there are no spans, so the
+AI-service call duration is not attributable inside a middleware request.
 
 **HTTP only.** No domain, so no certificate. A JWT crosses the internet in clear text.
 
@@ -277,9 +320,8 @@ crossing the wire. Narrow with `isinstance` rather than casting.
 MUI `sx`, no stylesheets. A helper named `useX` **is** a hook.
 
 **Logging** — structured, never concatenated. `logger.info("...", extra={"setId": str(id)})`; the JSON
-formatter promotes `extra` keys to top-level fields. Every response carries `X-Request-Id`, emitted by
-both services, so one id spans both logs — **once something collects them.** Nothing does yet; see the
-gap below.
+formatter promotes `extra` keys to top-level fields, which is what lets Alloy parse them into Loki. Every
+response carries `X-Request-Id`, emitted by both services, so one id spans both logs.
 
 **Tests** — test decisions, not accessors. `InterviewStatusTest` (state machine),
 `StorageKeyFactoryTest` (path traversal), `JwtServiceTest` (token type confusion, both directions) are the

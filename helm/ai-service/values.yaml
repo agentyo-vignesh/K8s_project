@@ -7,6 +7,17 @@ imageTag: ""
 
 replicas: 1
 
+# Needs metrics-server, which is an EKS addon in 2.eks.tf. Without it the HPA
+# reports <unknown>/70% forever and never says why.
+#
+# This service and not the middleware: the middleware's volume is ReadWriteOnce,
+# so a second replica could never attach it.
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPU: 70
+
 # The pod reads its own secrets from AWS. There is no Kubernetes Secret, and no
 # password is passed to Helm.
 #

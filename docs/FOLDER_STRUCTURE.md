@@ -181,10 +181,15 @@ chart in a sitting, and deploying one service cannot disturb another.
 ```
 helm/
 ├── platform/       StorageClass (gp3, default) + the ALB Ingress
+├── observability/  our two ServiceMonitors, plus upstream/ - values for the
+│                   Prometheus, Loki and Alloy charts
 ├── frontend/       configmap, deployment + service
 ├── middleware/     configmap, deployment + service, pvc, serviceaccount
-└── ai-service/     configmap, deployment + service, serviceaccount
+└── ai-service/     configmap, deployment + service, serviceaccount, hpa
 ```
+
+`observability/upstream/` holds values passed to third-party charts, not charts of our own. It installs
+after them: the `ServiceMonitor` kind does not exist until the Prometheus Operator creates the CRD.
 
 **No Secret object anywhere.** Each pod reads Secrets Manager itself over IRSA,
 so no amount of RBAC in the namespace exposes the database password.

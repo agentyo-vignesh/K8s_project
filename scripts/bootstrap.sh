@@ -57,15 +57,16 @@ POLICY_ARN="arn:aws:iam::${ACCOUNT}:policy/${POLICY_NAME}"
 if [ "$ASSUME_YES" != true ]; then
   echo
   echo "Account $ACCOUNT, region $REGION, image tag ${TAG:0:12}"
-  echo "This creates an EKS cluster, an RDS instance, a NAT gateway and an ALB."
-  echo "Roughly USD 178/month while it runs. Takes about 35 minutes."
+  echo "This creates an EKS cluster, an RDS instance, a NAT gateway and an ALB,"
+  echo "plus Prometheus, Grafana and Loki inside the cluster."
+  echo "Roughly USD 0.35/hour while it runs. Takes about 40 minutes."
   printf "Type the cluster name to continue: "
   read -r reply
   [ "$reply" = "$CLUSTER" ] || { echo "Aborted."; exit 1; }
 fi
 
 # ---------------------------------------------------------------- 1. terraform
-say "1/8 terraform - VPC, EKS, RDS, ECR, secrets, IAM (about 20 minutes)"
+say "1/10 terraform - VPC, EKS, RDS, ECR, secrets, IAM (about 20 minutes)"
 terraform -chdir="$TF_DIR" init -input=false
 terraform -chdir="$TF_DIR" apply -auto-approve
 
@@ -73,14 +74,14 @@ MIDDLEWARE_ROLE=$(terraform -chdir="$TF_DIR" output -raw middleware_role_arn)
 AI_SERVICE_ROLE=$(terraform -chdir="$TF_DIR" output -raw ai_service_role_arn)
 
 # ------------------------------------------------------------------ 2. kubectl
-say "2/8 kubeconfig and namespace"
+say "2/10 kubeconfig and namespace"
 aws eks update-kubeconfig --region "$REGION" --name "$CLUSTER"
 # Nothing else creates it: no chart declares a Namespace, and the deploy
 # workflows only pass --namespace. The GitHub access entry is scoped to it too.
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
 # ------------------------------------------------- 3. load balancer controller
-say "3/8 load balancer controller IAM policy"
+say "3/10 load balancer controller IAM policy"
 if aws iam get-policy --policy-arn "$POLICY_ARN" >/dev/null 2>&1; then
   echo "   already exists"
 else
@@ -97,7 +98,7 @@ else
   echo "   created"
 fi
 
-say "4/8 controller service account - eksctl writes the trust policy"
+say "4/10 controller service account - eksctl writes the trust policy"
 # By hand this is a JSON document with the OIDC issuer interpolated in three
 # places. Get one wrong and IAM still accepts it; the pod just cannot get
 # credentials. eksctl derives all three from the cluster.
@@ -107,7 +108,7 @@ eksctl create iamserviceaccount \
   --attach-policy-arn="$POLICY_ARN" \
   --override-existing-serviceaccounts --approve
 
-say "5/8 controller"
+say "5/10 controller"
 helm repo add eks https://aws.github.io/eks-charts >/dev/null
 helm repo update >/dev/null
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
@@ -120,15 +121,15 @@ helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-contro
   --wait
 
 # ------------------------------------- 6. StorageClass, before anything claims one
-say "6/8 platform - StorageClass only, the Ingress has nothing to point at yet"
+say "6/10 platform - StorageClass only, the Ingress has nothing to point at yet"
 helm upgrade --install platform "$ROOT/helm/platform" -n "$NAMESPACE" \
   --set createIngress=false
 
 # ------------------------------------------------------------------- 7. the app
-say "7/8 images"
+say "7/10 images"
 "$ROOT/scripts/build-images.sh" --registry "$REGISTRY" --tag "$TAG" --push
 
-say "7/8 services - middleware first, it owns the schema through Flyway"
+say "8/10 services - middleware first, it owns the schema through Flyway"
 helm upgrade --install middleware "$ROOT/helm/middleware" -n "$NAMESPACE" \
   --set imageRegistry="$REGISTRY" --set imageTag="$TAG" \
   --set aws.roleArn="$MIDDLEWARE_ROLE" \
@@ -144,7 +145,7 @@ helm upgrade --install frontend "$ROOT/helm/frontend" -n "$NAMESPACE" \
   --atomic --timeout 5m
 
 # --------------------------------------------- 8. the Ingress, now it can resolve
-say "8/8 Ingress"
+say "9/10 Ingress"
 helm upgrade --install platform "$ROOT/helm/platform" -n "$NAMESPACE" \
   --set createIngress=true
 
@@ -167,6 +168,39 @@ for _ in $(seq 1 40); do
   sleep 15
 done
 
+# ------------------------------------------------------- 10. metrics, dashboards, logs
+say "10/10 observability - Prometheus, Grafana, Loki, Alloy"
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null
+helm repo add grafana https://grafana.github.io/helm-charts >/dev/null
+helm repo update >/dev/null
+
+kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+
+# Chart versions are pinned. An unpinned chart means a class where the values
+# file silently stops matching the chart it is written for.
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --version 88.2.0 -n observability \
+  -f "$ROOT/helm/observability/upstream/kube-prometheus-stack.yaml" \
+  --wait --timeout 10m
+
+helm upgrade --install loki grafana/loki \
+  --version 7.2.0 -n observability \
+  -f "$ROOT/helm/observability/upstream/loki.yaml" \
+  --wait --timeout 5m
+
+helm upgrade --install alloy grafana/alloy \
+  --version 1.11.1 -n observability \
+  -f "$ROOT/helm/observability/upstream/alloy.yaml" \
+  --wait --timeout 5m
+
+# Ours, and last. It creates ServiceMonitors, and that kind does not exist until
+# the Prometheus Operator has installed the CRD - so run before this and helm
+# fails with `no matches for kind "ServiceMonitor"`.
+#
+# In the application namespace, not observability: a ServiceMonitor's selector
+# matches Services in its own namespace by default.
+helm upgrade --install observability "$ROOT/helm/observability" -n "$NAMESPACE"
+
 # ---------------------------------------------------------------------- verify
 say "Verifying through the ALB"
 printf "frontend   : %s\n" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "http://$ADDR/")"
@@ -186,7 +220,18 @@ fi
 
 say "Done in $(( (SECONDS - STARTED) / 60 )) minutes"
 echo
-echo "  http://$ADDR"
-echo "  admin@aiinterview.local / Admin@12345"
+echo "  App       http://$ADDR"
+echo "            admin@aiinterview.local / Admin@12345"
+echo
+echo "  Grafana   kubectl port-forward -n observability svc/kube-prometheus-stack-grafana 3000:80"
+echo "            http://localhost:3000  user: admin"
+echo "            kubectl get secret -n observability kube-prometheus-stack-grafana \\"
+echo "              -o jsonpath='{.data.admin-password}' | base64 -d"
+echo
+echo "  Targets   kubectl port-forward -n observability svc/kube-prometheus-stack-prometheus 9090:9090"
+echo "            http://localhost:9090/targets  - middleware and ai-service should both be UP"
+echo
+echo "  Metrics   kubectl top pods -n $NAMESPACE"
+echo "  HPA       kubectl get hpa -n $NAMESPACE -w"
 echo
 echo "Tear it down with ./scripts/teardown.sh - a bare terraform destroy will not work."

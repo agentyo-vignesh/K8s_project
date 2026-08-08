@@ -3,7 +3,13 @@ kind: Deployment
 metadata:
   name: ai-service
 spec:
+  {{- if not .Values.autoscaling.enabled }}
+  # Omitted entirely when the HPA is on. Leave it in and whoever applied last
+  # wins: helm sets replicas back to 1, the HPA scales it up again, and the next
+  # deploy undoes that. Exactly the same conflict as desired_size in 2.eks.tf,
+  # solved the same way - name one owner.
   replicas: {{ .Values.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       app: ai-service
@@ -54,9 +60,15 @@ apiVersion: v1
 kind: Service
 metadata:
   name: ai-service
+  labels:
+    # A ServiceMonitor selects on the labels of the SERVICE, not of the pods.
+    app: ai-service
 spec:
   selector:
     app: ai-service
   ports:
-    - port: 8000
+    # Named, because a ServiceMonitor selects a Service port by name. Leave the
+    # name off and Prometheus silently scrapes nothing.
+    - name: http
+      port: 8000
       targetPort: http

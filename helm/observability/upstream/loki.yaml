@@ -1,0 +1,82 @@
+# Values for grafana/loki.
+#
+# The chart's default shape is a distributed, S3-backed, cached deployment for a
+# production log volume. Almost everything here is turning that off.
+
+# SingleBinary: read, write and backend in one pod, storing to a local
+# filesystem. No S3 bucket, no separate components. The alternative modes need
+# object storage configured or they will not start at all.
+deploymentMode: SingleBinary
+
+loki:
+  # Multi-tenancy off. With it on, every query and every push needs an
+  # X-Scope-OrgID header, and Grafana returns "no org id" with no other clue.
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1
+
+  storage:
+    type: filesystem
+
+  # Required from chart 6.x onward. Loki refuses to start without a schema
+  # config, and the error names a config key rather than saying so.
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+  limits_config:
+    retention_period: 24h
+
+singleBinary:
+  replicas: 1
+  # No volume, same reason as Prometheus: a PVC here becomes an EBS disk that
+  # `terraform destroy` cannot remove.
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# The three distributed modes. Zero replicas each, or the chart creates them
+# alongside singleBinary and nothing works.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# =============================================================================
+# These two are why a first Loki install fails to schedule
+#
+# Both default to ENABLED and both are memcached with a memory request around
+# 9Gi. On any small cluster the pods sit Pending with
+# "Insufficient memory", and nothing points at Loki as the cause.
+# =============================================================================
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# A synthetic log generator that checks Loki is working. Useful in production,
+# noise in a class.
+lokiCanary:
+  enabled: false
+
+test:
+  enabled: false
+
+# An nginx in front of Loki, needed only for the distributed modes. With it
+# enabled the Grafana datasource URL would have to point at the gateway instead.
+gateway:
+  enabled: false
