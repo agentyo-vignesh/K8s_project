@@ -4,6 +4,11 @@ imageRegistry: ""
 # whatever was tagged v1 months ago - for middleware that is the image
 # built before the AWS sts module was added, which crashes at startup.
 imageTag: ""
+# The repository path under the registry. bootstrap.sh passes what Terraform
+# built, which is shared across environments by default - so the image tested in
+# dev is the one promoted to prod.
+imageRepository: ai-interview-platform
+
 
 replicas: 1
 

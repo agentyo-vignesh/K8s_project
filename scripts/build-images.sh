@@ -15,6 +15,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 REGISTRY=""
+# The repository path under the registry. bootstrap.sh passes whatever Terraform
+# built - shared across environments by default, per-environment if the tfvars
+# asked for that - so this default only applies to a hand-run build.
 NAMESPACE="ai-interview-platform"
 PUSH=false
 # Default tag is traceable rather than `latest`: a mutable tag makes it
@@ -26,9 +29,10 @@ error() { printf '\033[0;31m[x]\033[0m %s\n' "$*" >&2; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        -t|--tag)      TAG="$2"; shift 2 ;;
-        -r|--registry) REGISTRY="${2%/}"; shift 2 ;;
-        -p|--push)     PUSH=true; shift ;;
+        -t|--tag)       TAG="$2"; shift 2 ;;
+        -r|--registry)  REGISTRY="${2%/}"; shift 2 ;;
+        -n|--namespace) NAMESPACE="${2%/}"; shift 2 ;;
+        -p|--push)      PUSH=true; shift ;;
         -h|--help)
             sed -n '2,12p' "$0" | sed 's/^# \?//'
             exit 0

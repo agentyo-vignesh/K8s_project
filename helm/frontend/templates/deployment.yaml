@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: {{ .Values.imageRegistry }}/ai-interview-platform/frontend:{{ required "imageTag is required - pass --set imageTag=<sha>" .Values.imageTag }}
+          image: {{ .Values.imageRegistry }}/{{ .Values.imageRepository }}/frontend:{{ required "imageTag is required - pass --set imageTag=<sha>" .Values.imageTag }}
           ports:
             - name: http
               containerPort: 3000

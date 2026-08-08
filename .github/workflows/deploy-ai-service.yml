@@ -14,8 +14,14 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-  CLUSTER: ai-interview
-  NAMESPACE: ai-interview
+
+  # Every name below is built from these two, the same way terraform builds them
+  # from var.project and var.environment. Deploying to another environment is a
+  # one-word change here plus the matching AWS_DEPLOY_ROLE_ARN secret.
+  PROJECT: ai-interview
+  ENVIRONMENT: dev
+  CLUSTER: ai-interview-dev
+  NAMESPACE: ai-interview-dev
 
   # The commit CI actually tested. On a workflow_run event github.sha is the
   # tip of the default branch, NOT the commit that triggered the run - using
@@ -76,7 +82,7 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          IMAGE="$REGISTRY/ai-interview-platform/ai-service:$SHA"
+          IMAGE="$REGISTRY/$PROJECT-$ENVIRONMENT-platform/ai-service:$SHA"
           docker tag scan-target "$IMAGE"
           docker push "$IMAGE"
 
@@ -98,8 +104,9 @@ jobs:
           helm upgrade --install ai-service ./helm/ai-service \
             --namespace "$NAMESPACE" \
             --set imageRegistry="$REGISTRY" \
+            --set imageRepository="$PROJECT-$ENVIRONMENT-platform" \
             --set imageTag="$SHA" \
-            --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/ai-interview-ai-service" \
+            --set aws.roleArn="arn:aws:iam::${{ steps.aws.outputs.account }}:role/$PROJECT-$ENVIRONMENT-ai-service" \
             --atomic --timeout 5m
 
       # --atomic only catches "the pods never became ready". A pod can be

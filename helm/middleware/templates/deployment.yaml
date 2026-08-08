@@ -34,7 +34,7 @@ spec:
 
       containers:
         - name: middleware
-          image: {{ .Values.imageRegistry }}/ai-interview-platform/middleware:{{ required "imageTag is required - pass --set imageTag=<sha>" .Values.imageTag }}
+          image: {{ .Values.imageRegistry }}/{{ .Values.imageRepository }}/middleware:{{ required "imageTag is required - pass --set imageTag=<sha>" .Values.imageTag }}
           ports:
             - name: http
               containerPort: 8080
