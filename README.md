@@ -191,10 +191,11 @@ role needs an EKS access entry or `helm upgrade` fails with
 That is the whole thing, and it is worth reading rather than just running,
 because four orderings in it are not obvious:
 
-**Terraform is not the whole story.** It applies 62 resources in one command —
-VPC, EKS, RDS, ECR, Secrets Manager, the IRSA roles. It does **not** install the
-AWS Load Balancer Controller, whose IAM role comes from
-`eksctl create iamserviceaccount` as a CloudFormation stack.
+**Terraform is not the whole story.** It applies 52 resources per environment —
+VPC, EKS, RDS, ECR, Secrets Manager, the IRSA roles — plus one account-level
+resource from `terraform/global`. It does **not** install the AWS Load Balancer
+Controller, whose IAM role comes from `eksctl create iamserviceaccount` as a
+CloudFormation stack.
 
 **The StorageClass must precede the middleware**, whose PVC would otherwise stay
 Pending forever — EKS ships no default StorageClass. **The Ingress must follow the
@@ -223,7 +224,7 @@ Details: [terraform/README.md](terraform/README.md) and [CLAUDE.md](CLAUDE.md).
 | [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Layering rules, testing, conventions |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Failure modes and deliberate exercises |
 | [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md) | Every directory and why |
-| [terraform/README.md](terraform/README.md) | The seven files, and what `parked/` is for |
+| [terraform/README.md](terraform/README.md) | The three roots, and exactly what an environment creates |
 
 ## Security notes
 

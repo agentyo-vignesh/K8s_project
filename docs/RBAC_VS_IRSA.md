@@ -369,9 +369,9 @@ the trust policy compared against and rejected. The whole chain, visible end to 
 
 ## Related
 
-- [`../terraform/2.eks.tf`](../terraform/2.eks.tf) — the OIDC provider and the EBS CSI IRSA role
-- [`../terraform/6.iam.tf`](../terraform/6.iam.tf) — one application IRSA role per service, built with
+- [`../terraform/modules/platform/2.eks.tf`](../terraform/modules/platform/2.eks.tf) — the OIDC provider and the EBS CSI IRSA role
+- [`../terraform/modules/platform/6.iam.tf`](../terraform/modules/platform/6.iam.tf) — one application IRSA role per service, built with
   `for_each` over the `sub` conditions. The `sub` is what stops any other pod assuming the role
-- [`../terraform/7.github.tf`](../terraform/7.github.tf) — the same mechanism with GitHub as the issuer
+- [`../terraform/modules/platform/7.github.tf`](../terraform/modules/platform/7.github.tf) — the same mechanism with GitHub as the issuer
   instead of the cluster
 - [`../scripts/eks-auth-demo.ps1`](../scripts/eks-auth-demo.ps1) — the other direction, step by step

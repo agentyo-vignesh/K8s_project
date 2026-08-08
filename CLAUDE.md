@@ -179,29 +179,46 @@ interview id.
 
 ## Infrastructure
 
-Terraform applies the whole stack in one `terraform apply`. The numbers are for humans; Terraform derives
-the real order from the dependency graph.
+Three roots. `cd` into one and you are in it — the backend and the values are the same file, so there is
+no `-var-file` to forget and no way to apply one environment's values to another's state.
 
 ```
 terraform/
-├── 1.vpc.tf       VPC 10.0.0.0/16, 2 public + 2 private subnets, IGW, NAT
-├── 2.eks.tf       cluster, node group (t3.medium), OIDC provider, 5 addons, EBS CSI IRSA role
-├── 3.rds.tf       PostgreSQL 16.14, private subnets, SG referencing the cluster SG
-├── 4.ecr.tf       three repositories
-├── 5.secrets.tf   two Secrets Manager secrets, in the exact shape the apps parse
-├── 6.iam.tf       one IRSA role per service
-├── 7.github.tf    GitHub OIDC provider + the role Actions assumes, with an EKS access entry
-└── parked/        an older full-stack module version, commented out
+├── global/                 account-level, applied once
+│   └── main.tf             the GitHub OIDC provider - one per URL per AWS account
+├── modules/platform/       what gets created; never applied directly
+│   ├── 1.vpc.tf            VPC, 2 public + 2 private subnets, IGW, NAT
+│   ├── 2.eks.tf            cluster, node group, OIDC provider, 5 addons, EBS CSI IRSA role
+│   ├── 3.rds.tf            PostgreSQL 16.14, private subnets, SG referencing the cluster SG
+│   ├── 4.ecr.tf            one repository per service, per environment
+│   ├── 5.secrets.tf        two Secrets Manager secrets, in the exact shape the apps parse
+│   ├── 6.iam.tf            one IRSA role per service, driven by var.irsa_service_accounts
+│   ├── 7.github.tf         the role Actions assumes, plus an EKS access entry
+│   ├── variables.tf        24 inputs; only `services` and `irsa_service_accounts` have defaults
+│   └── locals.tf           every name derived from project + environment
+├── environments/
+│   ├── dev/main.tf         backend, provider, module call, 13 outputs
+│   └── prod/main.tf        the same module, every differing line visible
+└── parked/                 an older full-stack version, not loaded by Terraform
 ```
 
-Cluster `ai-interview` in `ap-south-1`. The `kubernetes.io/role/elb` and `kubernetes.io/cluster/ai-interview`
-subnet tags in `1.vpc.tf` are what let the load balancer controller find the public subnets; they must
-match the cluster name.
+```bash
+cd terraform/global            && terraform init && terraform apply    # once per account
+cd terraform/environments/dev  && terraform init && terraform apply    # 52 resources
+```
 
-**The load balancer controller is not in Terraform.** Its IAM role was created by
-`eksctl create iamserviceaccount`, which builds a CloudFormation stack, and the controller itself by
-`helm install` into `kube-system`. So `terraform destroy` leaves both behind - see the teardown note in
-`terraform/README.md`.
+Everything is named `<project>-<environment>-*`, so dev and prod share nothing: separate VPCs on
+different CIDRs, separate clusters, databases, ECR registries, IAM roles, secrets and state files. The
+`kubernetes.io/cluster/<cluster>` subnet tags interpolate `local.cluster_name`, so they cannot drift from
+the name `2.eks.tf` gives the cluster — a mismatch applies cleanly and only surfaces later, at the Ingress.
+
+**Almost no variable has a default.** Every environment was passing an explicit value anyway, which made
+the defaults dead: change one and nothing happens, change an environment and the default becomes a lie
+about what "normal" is. A variable now either has a default nobody overrides, or none at all.
+
+**The load balancer controller is not in Terraform.** Its IAM role comes from
+`eksctl create iamserviceaccount`, which builds a CloudFormation stack, and the controller itself from
+`helm install` into `kube-system`. So `terraform destroy` leaves both behind — see `terraform/README.md`.
 
 ### Secrets never become a Kubernetes Secret
 

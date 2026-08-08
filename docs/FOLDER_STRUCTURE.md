@@ -206,29 +206,40 @@ without them. Both were previously defaulted and both failed silently.
 
 ## `terraform/`
 
-The whole stack, in one `terraform apply` — 62 resources. An older full-stack
-version sits in `terraform/parked/`, documented in
+Three roots. One environment is 52 resources. Full detail in
 [`../terraform/README.md`](../terraform/README.md).
+
+```
+terraform/
+├── global/                 account-level, applied once
+│   └── main.tf             the GitHub OIDC provider — one per URL per AWS account
+├── modules/platform/       what gets created; never applied directly
+│   ├── 1.vpc.tf            VPC, subnets, IGW, NAT
+│   ├── 2.eks.tf            cluster, nodes, 5 addons, cluster OIDC provider
+│   ├── 3.rds.tf            PostgreSQL in the private subnets
+│   ├── 4.ecr.tf            one repository per service, per environment
+│   ├── 5.secrets.tf        Secrets Manager — the values the pods read
+│   ├── 6.iam.tf            IRSA roles, one per service
+│   ├── 7.github.tf         the role GitHub Actions assumes to deploy
+│   ├── variables.tf        24 inputs, 2 with defaults
+│   └── locals.tf           names derived from project + environment
+├── environments/
+│   ├── dev/main.tf         backend, provider, module call, outputs
+│   └── prod/main.tf        the same module, different decisions
+└── parked/                 an older full-stack version — not loaded by Terraform
+```
+
+`cd terraform/environments/dev && terraform init && terraform apply`. The backend
+and the values are in that one file, so `init` and `apply` both need no flags and
+neither can be pointed at the wrong environment.
+
+The file numbers inside the module are for humans; Terraform works out the real
+order from the dependencies between resources.
 
 Two things are **not** in Terraform: the AWS Load Balancer Controller (its role
 comes from `eksctl create iamserviceaccount`, a CloudFormation stack) and the ALB
 and EBS volume that Kubernetes controllers create at runtime. That is why
 `terraform destroy` alone does not tear this down — see `scripts/teardown.sh`.
-
-```
-terraform/
-├── 1.vpc.tf        network — VPC, subnets, NAT. Carries terraform{} and provider{}
-├── 2.eks.tf        cluster, nodes, addons, OIDC provider
-├── 3.rds.tf        PostgreSQL in the private subnets
-├── 4.ecr.tf        three container registries
-├── 5.secrets.tf    Secrets Manager — the values the pods read
-├── 6.iam.tf        IRSA roles, one per service
-├── 7.github.tf     the role GitHub Actions assumes to deploy
-└── parked/         an older full-stack version — not loaded by Terraform
-```
-
-Everything applies in one `terraform apply`. The numbers are for humans;
-Terraform works out the real order from the dependencies between resources.
 
 Terraform only loads `.tf` files in the working directory, not subdirectories, so
 `parked/` is inert without commenting anything out.
