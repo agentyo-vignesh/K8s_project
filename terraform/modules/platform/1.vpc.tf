@@ -1,38 +1,24 @@
-# =============================================================================
-# VPC — network only.
+# Network. Applied through environments/<env>, never directly.
 #
-#   cd terraform
-#   terraform init
-#   terraform plan
-#   terraform apply
+#   ${var.vpc_cidr}                  dev 10.0.0.0/16, prod 10.1.0.0/16
+#   ├── public  x2   .1.0/24 .4.0/24   two AZs, Internet Gateway, NAT
+#   └── private x2   .2.0/24 .3.0/24   nodes, pods, RDS
 #
-# This file creates the COMPLETE network and nothing else:
-#
-#   VPC 10.0.0.0/16
-#   ├── Pub-Subnet    10.0.1.0/24   ap-south-1a  → Internet Gateway
-#   │     └── NAT Gateway
-#   ├── Pvt-Subnet-1  10.0.2.0/24   ap-south-1a  → NAT
-#   └── Pvt-Subnet-2  10.0.3.0/24   ap-south-1b  → NAT
-#
-# This file is the network only. 2.eks.tf through 7.github.tf build the rest, and
-# all of it applies together — the numbers are for humans, Terraform derives the
-# real order from the references between resources.
-#
-# This file also carries the terraform{} and provider{} blocks for the whole
-# directory, because they have to live somewhere and this is what gets read first.
-# =============================================================================
+# The file numbers are for humans; Terraform derives the real order from the
+# references between resources.
 
 terraform {
-  required_version = "~> 1.9"
+  # 1.10 or newer: the environments use S3-native state locking, added there.
+  required_version = ">= 1.10"
 
+  # A module declares providers; it does not configure them. Region, credentials
+  # and default tags belong to the environment that calls it.
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.70"
     }
-    # Used by 3.rds.tf to generate the master password. A module can only declare
-    # required_providers once, so it lives here even though nothing in this file
-    # uses it.
+    # Used by 3.rds.tf to generate the master password.
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -45,145 +31,97 @@ terraform {
   }
 }
 
-provider "aws" {
-  region = "ap-south-1"
-}
-
-# -----------------------------------------------------------------------------
-# VPC
-#
-# enable_dns_hostnames / enable_dns_support are required by EKS later. Without
-# them nodes fail to join the cluster, and the error does not mention DNS.
-# -----------------------------------------------------------------------------
+# enable_dns_* are required by EKS. Without them nodes fail to join and the
+# error does not mention DNS.
 resource "aws_vpc" "my-vpc" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = var.vpc_cidr
   instance_tenancy     = "default"
   enable_dns_hostnames = true
   enable_dns_support   = true
 
   tags = {
-    Name        = "VPC-A"
-    Environment = "Dev"
-    Project     = "Terraform"
-    created_by  = "vignesh"
+    Name = "${local.name}-vpc"
   }
 }
 
-# -----------------------------------------------------------------------------
-# Public subnet — holds the NAT Gateway and, later, the load balancer.
+# Two, in two AZs: EKS rejects a single-AZ cluster and the load balancer
+# controller needs two public subnets before it will build an ALB.
 #
-# The kubernetes.io tags are not decorative: the AWS Load Balancer Controller
-# finds subnets by them. Without them an Ingress creates no ALB and reports
-# "unable to discover subnets", which reads like a permissions problem.
-# -----------------------------------------------------------------------------
+# The kubernetes.io tags are how the controller finds them. Without them an
+# Ingress creates no ALB and reports "unable to discover subnets", which reads
+# like a permissions problem. The cluster tag interpolates local.cluster_name so
+# it cannot drift from the name 2.eks.tf uses.
 resource "aws_subnet" "Pub-Subnet" {
   vpc_id                  = aws_vpc.my-vpc.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "ap-south-1a"
+  cidr_block              = local.public_subnet_cidrs[0]
+  availability_zone       = var.azs[0]
   map_public_ip_on_launch = true
 
   tags = {
-    Name                                 = "App-Subnet"
-    Environment                          = "Dev"
-    Project                              = "Terraform"
-    created_by                           = "vignesh"
-    "kubernetes.io/role/elb"             = "1"
-    "kubernetes.io/cluster/ai-interview" = "shared"
+    Name                                          = "${local.name}-public-1"
+    "kubernetes.io/role/elb"                      = "1"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
   }
 }
 
-# Second public subnet, second AZ. Two reasons, both hard requirements:
-#
-#   1. eksctl refuses a cluster with one public subnet — "insufficient number of
-#      subnets, at least 2x public and/or 2x private subnets are required".
-#   2. The AWS Load Balancer Controller needs two public subnets in two AZs
-#      before it will create an internet-facing ALB for the Ingress.
-#
-# Subnets themselves cost nothing, so there is no reason to run without it.
 resource "aws_subnet" "Pub-Subnet-2" {
   vpc_id                  = aws_vpc.my-vpc.id
-  cidr_block              = "10.0.4.0/24"
-  availability_zone       = "ap-south-1b"
+  cidr_block              = local.public_subnet_cidrs[1]
+  availability_zone       = var.azs[1]
   map_public_ip_on_launch = true
 
   tags = {
-    Name                                 = "App-Subnet-2"
-    Environment                          = "Dev"
-    Project                              = "Terraform"
-    created_by                           = "vignesh"
-    "kubernetes.io/role/elb"             = "1"
-    "kubernetes.io/cluster/ai-interview" = "shared"
+    Name                                          = "${local.name}-public-2"
+    "kubernetes.io/role/elb"                      = "1"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
   }
 }
 
-# -----------------------------------------------------------------------------
-# Private subnets — nodes, pods and RDS go here later.
-#
-# TWO of them, in TWO different AZs. EKS rejects a single-AZ cluster at creation
-# time, and an RDS subnet group also needs two. This is the one thing here that
-# cannot be simplified further.
-#
-# /24 gives 251 usable IPs per subnet. The VPC CNI assigns every pod a real VPC
-# IP, so that is the pod ceiling per subnet. Nowhere near binding here: t3.small
-# nodes cap out at 11 pods each. The binding limit is the account vCPU quota
-# (L-1216C47A), not addresses - a node group that will not scale is usually that,
-# and it surfaces only in the ASG StatusMessage.
-# -----------------------------------------------------------------------------
+# Nodes, pods and RDS. A /24 gives 251 addresses and the CNI gives every pod a
+# real VPC IP, so that is the pod ceiling - but the account vCPU quota
+# (L-1216C47A) runs out first, visible only in the ASG StatusMessage.
 resource "aws_subnet" "Pvt-Subnet-1" {
   vpc_id            = aws_vpc.my-vpc.id
-  cidr_block        = "10.0.2.0/24"
-  availability_zone = "ap-south-1a"
+  cidr_block        = local.private_subnet_cidrs[0]
+  availability_zone = var.azs[0]
 
   tags = {
-    Name                                 = "DB-Subnet-1"
-    Environment                          = "Dev"
-    Project                              = "Terraform"
-    created_by                           = "vignesh"
-    "kubernetes.io/role/internal-elb"    = "1"
-    "kubernetes.io/cluster/ai-interview" = "shared"
+    Name                                          = "${local.name}-private-1"
+    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
   }
 }
 
 resource "aws_subnet" "Pvt-Subnet-2" {
   vpc_id            = aws_vpc.my-vpc.id
-  cidr_block        = "10.0.3.0/24"
-  availability_zone = "ap-south-1b"
+  cidr_block        = local.private_subnet_cidrs[1]
+  availability_zone = var.azs[1]
 
   tags = {
-    Name                                 = "DB-Subnet-2"
-    Environment                          = "Dev"
-    Project                              = "Terraform"
-    created_by                           = "vignesh"
-    "kubernetes.io/role/internal-elb"    = "1"
-    "kubernetes.io/cluster/ai-interview" = "shared"
+    Name                                          = "${local.name}-private-2"
+    "kubernetes.io/role/internal-elb"             = "1"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
   }
 }
 
-# -----------------------------------------------------------------------------
-# Internet Gateway — public egress.
-# -----------------------------------------------------------------------------
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.my-vpc.id
 
   tags = {
-    Name = "main"
+    Name = "${local.name}-igw"
   }
 }
 
-# -----------------------------------------------------------------------------
-# NAT Gateway — private egress, for image pulls and AWS APIs.
+# Private egress, for image pulls and AWS APIs. ~USD 32/month, and the resource
+# people forget to delete.
 #
-# depends_on is deliberate. Without it Terraform can try to create the NAT before
-# the Internet Gateway is attached, and the apply fails with a dependency error
-# that only appears sometimes.
-#
-# Costs ~USD 32/month. This is the resource people forget to delete.
-# -----------------------------------------------------------------------------
+# depends_on is deliberate: without it Terraform can start the NAT before the
+# Internet Gateway is attached, and the apply fails only sometimes.
 resource "aws_eip" "lb" {
   domain = "vpc"
 
   tags = {
-    Name = "nat-eip"
+    Name = "${local.name}-nat-eip"
   }
 
   depends_on = [aws_internet_gateway.gw]
@@ -194,15 +132,12 @@ resource "aws_nat_gateway" "ram" {
   subnet_id     = aws_subnet.Pub-Subnet.id
 
   tags = {
-    Name = "gw NAT"
+    Name = "${local.name}-nat"
   }
 
   depends_on = [aws_internet_gateway.gw]
 }
 
-# -----------------------------------------------------------------------------
-# Route tables
-# -----------------------------------------------------------------------------
 resource "aws_route_table" "Pub-Route-Table" {
   vpc_id = aws_vpc.my-vpc.id
 
@@ -212,7 +147,7 @@ resource "aws_route_table" "Pub-Route-Table" {
   }
 
   tags = {
-    Name = "App-Route-Table"
+    Name = "${local.name}-public-rt"
   }
 }
 
@@ -227,13 +162,10 @@ resource "aws_route_table" "Pvt-Route-Table" {
   }
 
   tags = {
-    Name = "DB-Route-Table"
+    Name = "${local.name}-private-rt"
   }
 }
 
-# -----------------------------------------------------------------------------
-# Associations
-# -----------------------------------------------------------------------------
 resource "aws_route_table_association" "Pub-Route-Table-Association" {
   subnet_id      = aws_subnet.Pub-Subnet.id
   route_table_id = aws_route_table.Pub-Route-Table.id
@@ -254,12 +186,6 @@ resource "aws_route_table_association" "Pvt-Route-Table-Association-2" {
   route_table_id = aws_route_table.Pvt-Route-Table.id
 }
 
-# -----------------------------------------------------------------------------
-# Outputs — consumed by scripts/bootstrap.sh
-#
-# There is no eksctl_command output any more. 2.eks.tf creates the cluster, so
-# running eksctl would collide on the name or build a second one.
-# -----------------------------------------------------------------------------
 output "vpc_id" {
   value = aws_vpc.my-vpc.id
 }
@@ -276,3 +202,23 @@ output "nat_gateway_public_ip" {
   value = aws_eip.lb.public_ip
 }
 
+# Read by the scripts so they never restate a name.
+output "project" {
+  value = var.project
+}
+
+output "environment" {
+  value = var.environment
+}
+
+output "region" {
+  value = var.region
+}
+
+output "namespace" {
+  value = local.namespace
+}
+
+output "ecr_prefix" {
+  value = local.ecr_prefix
+}

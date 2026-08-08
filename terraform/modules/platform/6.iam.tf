@@ -1,10 +1,5 @@
-# =============================================================================
-# IRSA roles - one per service, so each pod gets only what it needs.
-#
-# The middleware also reads the database secret; the AI service reads both too,
-# because it connects to the same database. Neither role can read anything else
-# in the account.
-# =============================================================================
+# IRSA roles - one per service. Driven by var.irsa_service_accounts, so a fourth
+# service is one map entry rather than a copied block.
 
 locals {
   oidc_url = replace(aws_iam_openid_connect_provider.oidc.url, "https://", "")
@@ -15,13 +10,11 @@ locals {
   ]
 }
 
-# A pod may assume a role only if its ServiceAccount name matches exactly.
-# Without the sub condition, ANY pod in the cluster could read these secrets.
+# The sub condition is the security boundary: without it any pod in the cluster
+# could read these secrets. The namespace is part of it, so a dev pod cannot
+# reach prod's secrets.
 data "aws_iam_policy_document" "irsa_assume" {
-  for_each = {
-    middleware = "system:serviceaccount:ai-interview:middleware"
-    ai_service = "system:serviceaccount:ai-interview:ai-service"
-  }
+  for_each = var.irsa_service_accounts
 
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -35,7 +28,7 @@ data "aws_iam_policy_document" "irsa_assume" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_url}:sub"
-      values   = [each.value]
+      values   = ["system:serviceaccount:${local.namespace}:${each.value}"]
     }
 
     condition {
@@ -46,7 +39,8 @@ data "aws_iam_policy_document" "irsa_assume" {
   }
 }
 
-# Read-only, and only these two secrets.
+# Read-only, these two secrets only. The ARNs already carry the random suffix AWS
+# appends; a wildcard would widen this to every secret with the same prefix.
 data "aws_iam_policy_document" "read_secrets" {
   statement {
     actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
@@ -55,36 +49,32 @@ data "aws_iam_policy_document" "read_secrets" {
   }
 }
 
-resource "aws_iam_role" "middleware" {
-  name               = "ai-interview-middleware"
-  assume_role_policy = data.aws_iam_policy_document.irsa_assume["middleware"].json
+resource "aws_iam_role" "service" {
+  for_each = var.irsa_service_accounts
+
+  # The environment is in the name because IAM is account-wide.
+  name               = "${local.name}-${each.value}"
+  assume_role_policy = data.aws_iam_policy_document.irsa_assume[each.key].json
 }
 
-resource "aws_iam_role_policy" "middleware" {
+resource "aws_iam_role_policy" "service" {
+  for_each = var.irsa_service_accounts
+
   name   = "read-secrets"
-  role   = aws_iam_role.middleware.id
+  role   = aws_iam_role.service[each.key].id
   policy = data.aws_iam_policy_document.read_secrets.json
 }
 
-resource "aws_iam_role" "ai_service" {
-  name               = "ai-interview-ai-service"
-  assume_role_policy = data.aws_iam_policy_document.irsa_assume["ai_service"].json
+output "service_role_arns" {
+  description = "Keyed by the map key in var.irsa_service_accounts."
+  value       = { for k, r in aws_iam_role.service : k => r.arn }
 }
 
-resource "aws_iam_role_policy" "ai_service" {
-  name   = "read-secrets"
-  role   = aws_iam_role.ai_service.id
-  policy = data.aws_iam_policy_document.read_secrets.json
-}
-
-# -----------------------------------------------------------------------------
-# Outputs - annotate each ServiceAccount with the matching ARN
-# -----------------------------------------------------------------------------
-
+# Named individually too: a script cannot `terraform output -raw` one map key.
 output "middleware_role_arn" {
-  value = aws_iam_role.middleware.arn
+  value = aws_iam_role.service["middleware"].arn
 }
 
 output "ai_service_role_arn" {
-  value = aws_iam_role.ai_service.arn
+  value = aws_iam_role.service["ai_service"].arn
 }

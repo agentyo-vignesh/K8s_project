@@ -1,14 +1,10 @@
-# =============================================================================
-# EKS — raw resources, no module. Applies after 1.vpc.tf, before 3.rds.tf.
+# EKS - raw resources, no upstream module, so every object is visible.
 #
-#   terraform apply
-#   aws eks update-kubeconfig --region ap-south-1 --name ai-interview
-# =============================================================================
+#   terraform output -raw kubeconfig_command | bash
 
-locals {
-  cluster_name = "ai-interview" # must match the kubernetes.io/cluster tags in 1.vpc.tf
-  # Verify before changing: aws eks describe-addon-versions --query 'addons[0].addonVersions[0].compatibilities[].clusterVersion'
-  cluster_version = "1.36"
+variable "cluster_version" {
+  description = "Upgraded one environment at a time, dev first. Check: aws eks describe-addon-versions"
+  type        = string
 }
 
 # -----------------------------------------------------------------------------
@@ -45,7 +41,7 @@ resource "aws_iam_role_policy_attachment" "cluster_eks" {
 # All four subnets: private for node ENIs, public so an Ingress can place an ALB.
 resource "aws_eks_cluster" "main" {
   name     = local.cluster_name
-  version  = local.cluster_version
+  version  = var.cluster_version
   role_arn = aws_iam_role.cluster.arn
 
   # false because every addon below is managed explicitly; true would install a
@@ -175,22 +171,15 @@ resource "aws_eks_node_group" "default" {
   ami_type      = "AL2023_x86_64_STANDARD"
   capacity_type = "ON_DEMAND"
 
-  # t3.medium, not t3.small, for one reason: the observability stack.
-  #
-  # t3.small gives ~1.6 GiB allocatable after the kubelet and system reservation.
-  # Two of them hold the application (832 MiB of requests), the load balancer
-  # controller and the addons with ~1.8 GiB spare. Prometheus, Grafana and Loki
-  # want roughly 1.6 GiB between them, which fits only with nothing left over -
-  # and the first pod to grow gets something else evicted.
-  #
-  # The cluster is created and destroyed around each session, so this is not a
-  # monthly cost: it is about +USD 0.045/hour, or 18 cents on a four-hour class.
-  instance_types = ["t3.medium"]
+  # t3.small is below the floor once observability is installed: two of them give
+  # ~3.2 GiB allocatable against ~2.5 GiB of requests, and the first pod to grow
+  # evicts something. The step up is +USD 0.045/hour, not a monthly figure.
+  instance_types = var.node_instance_types
 
   scaling_config {
-    desired_size = 2
-    min_size     = 2
-    max_size     = 3
+    desired_size = var.node_desired_size
+    min_size     = var.node_min_size
+    max_size     = var.node_max_size
   }
 
   update_config {
@@ -209,10 +198,8 @@ resource "aws_eks_node_group" "default" {
   ]
 
   lifecycle {
-    # Whoever scales the group owns desired_size, not Terraform. No autoscaler is
-    # installed yet, so today this guards a manual `eks update-nodegroup-config`.
-    # Without it, the next apply would drag the count back to 2 and the one after
-    # that would show the same diff again.
+    # Whoever scales the group owns desired_size, not Terraform. Without this the
+    # next apply drags the count back and the one after shows the same diff.
     ignore_changes = [scaling_config[0].desired_size]
   }
 }
@@ -221,8 +208,9 @@ resource "aws_eks_node_group" "default" {
 # Addons — vpc_cni and kube_proxy before nodes, coredns and ebs_csi after
 # -----------------------------------------------------------------------------
 
-# Prefix delegation lifts the pod ceiling on t3.medium from 17 to ~110. The
-# observability stack alone is nine pods, so the default ceiling is not academic.
+# Prefix delegation raises how many IPs a node can hand out. It does NOT raise
+# the kubelet's --max-pods on its own, so a t3.small still admits 11 pods - which
+# is why the node COUNT, not the node size, is what this cluster is sized on.
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "vpc-cni"
@@ -265,12 +253,9 @@ resource "aws_eks_addon" "ebs_csi" {
   depends_on = [aws_eks_node_group.default]
 }
 
-# EKS ships no metrics-server, and without it `kubectl top` returns "Metrics API
-# not available" and every HorizontalPodAutoscaler sits at <unknown>/70% forever
-# without ever saying why.
-#
-# It is an addon rather than a Helm release because it belongs to the cluster
-# rather than to the application, and because the version then tracks the cluster.
+# EKS ships none. Without it `kubectl top` returns "Metrics API not available"
+# and every HPA sits at <unknown>/70% without saying why. An addon rather than a
+# Helm release: it belongs to the cluster, and the version tracks it.
 resource "aws_eks_addon" "metrics_server" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "metrics-server"
@@ -342,5 +327,5 @@ output "oidc_provider_arn" {
 }
 
 output "kubeconfig_command" {
-  value = "aws eks update-kubeconfig --region ap-south-1 --name ${aws_eks_cluster.main.name}"
+  value = "aws eks update-kubeconfig --region ${var.region} --name ${aws_eks_cluster.main.name}"
 }

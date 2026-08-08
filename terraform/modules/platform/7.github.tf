@@ -1,61 +1,17 @@
-# =============================================================================
-# The role GitHub Actions assumes to deploy.
-#
-# Same idea as IRSA, different identity provider. A pod proves who it is with a
-# token signed by the cluster; a workflow proves it with a token signed by
+# The role GitHub Actions assumes to deploy. Same mechanism as IRSA with a
+# different issuer: a pod's token is signed by the cluster, a workflow's by
 # GitHub. Neither needs an access key.
-# =============================================================================
+#
+# The OIDC provider itself is account-global, so it is created once by
+# terraform/global and passed in as var.github_oidc_provider_arn.
 
-variable "github_repo" {
-  description = "owner/name of the repository allowed to deploy"
-  type        = string
-  default     = "agentyo-vignesh/K8s_project"
-}
-
-# GitHub can send the sub claim in two shapes:
+# The sub condition is the whole control. It pins the repository the way IRSA
+# pins a ServiceAccount; any other repo with a valid GitHub token is refused.
 #
-#   repo:owner/name:ref:refs/heads/main                       classic
-#   repo:owner@<ownerId>/name@<repoId>:ref:refs/heads/main    immutable ids
-#
-# The second is what this repository actually sends. The numeric ids survive a
-# rename, so trust cannot follow a repository that was renamed away and cannot
-# be inherited by a new repository that takes the old name.
-#
-# Both patterns are allowed, because which one arrives depends on an
-# organisation setting that can change. Find yours with:
+# Two shapes are allowed because which one GitHub sends depends on an org
+# setting: repo:owner/name:* and repo:owner@<ownerId>/name@<repoId>:*. The
+# numeric ids survive a rename, so trust cannot follow a repository renamed away.
 #   gh api repos/<owner>/<name> --jq '{owner:.owner.id, repo:.id}'
-variable "github_owner_id" {
-  description = "Numeric GitHub owner id"
-  type        = string
-  default     = "236602875"
-}
-
-variable "github_repo_id" {
-  description = "Numeric GitHub repository id"
-  type        = string
-  default     = "1326182266"
-}
-
-# -----------------------------------------------------------------------------
-# Trust GitHub as a token issuer
-# -----------------------------------------------------------------------------
-data "tls_certificate" "github" {
-  url = "https://token.actions.githubusercontent.com"
-}
-
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.github.certificates[0].sha1_fingerprint]
-}
-
-# -----------------------------------------------------------------------------
-# The role
-# -----------------------------------------------------------------------------
-
-# The sub condition is the whole control, exactly as with IRSA. Here it pins the
-# repository instead of a ServiceAccount - any other repo presenting a valid
-# GitHub token is still refused.
 data "aws_iam_policy_document" "github_assume" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -63,7 +19,7 @@ data "aws_iam_policy_document" "github_assume" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [var.github_oidc_provider_arn]
     }
 
     condition {
@@ -83,8 +39,9 @@ data "aws_iam_policy_document" "github_assume" {
   }
 }
 
+# One role per environment: a dev deploy must not reach prod's cluster.
 resource "aws_iam_role" "github_deploy" {
-  name               = "ai-interview-github-deploy"
+  name               = "${local.name}-github-deploy"
   assume_role_policy = data.aws_iam_policy_document.github_assume.json
 }
 
@@ -127,12 +84,8 @@ resource "aws_iam_role_policy" "github_deploy" {
   policy = data.aws_iam_policy_document.github_deploy.json
 }
 
-# -----------------------------------------------------------------------------
-# Let that role talk to the Kubernetes API
-# -----------------------------------------------------------------------------
-
 # IAM alone is not enough. Without an access entry, kubectl and helm fail with
-# "You must be logged in to the server", even though the AWS login succeeded.
+# "You must be logged in to the server" even though the AWS login succeeded.
 resource "aws_eks_access_entry" "github_deploy" {
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = aws_iam_role.github_deploy.arn
@@ -148,11 +101,11 @@ resource "aws_eks_access_policy_association" "github_deploy" {
 
   access_scope {
     type       = "namespace"
-    namespaces = ["ai-interview"]
+    namespaces = [local.namespace]
   }
 }
 
 output "github_deploy_role_arn" {
-  description = "Set this as the AWS_DEPLOY_ROLE_ARN repository secret"
+  description = "Set this as the AWS_DEPLOY_ROLE_ARN secret for this environment"
   value       = aws_iam_role.github_deploy.arn
 }

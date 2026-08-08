@@ -1,23 +1,15 @@
-# =============================================================================
-# PostgreSQL on RDS — demo database, not production.
-#
-# Private subnets, reachable only from the EKS nodes. No Secrets Manager, no
-# parameter group, no Multi-AZ, no backups. Read the password with:
-#   terraform output -raw db_password
-#
-# Applies after 2.eks.tf — the security group below references the cluster's SG.
-# =============================================================================
+# PostgreSQL, private subnets, reachable only from the EKS nodes.
+# Applies after 2.eks.tf - the security group references the cluster's SG.
 
 # RDS needs two AZs even for a single-AZ instance.
 resource "aws_db_subnet_group" "main" {
-  name       = "ai-interview-db"
+  name       = "${local.name}-db"
   subnet_ids = [aws_subnet.Pvt-Subnet-1.id, aws_subnet.Pvt-Subnet-2.id]
 }
 
-# 5432 from the EKS cluster security group only — a group reference, not a CIDR,
-# because node IPs change every time the node group scales.
+# A group reference, not a CIDR: node IPs change every time the group scales.
 resource "aws_security_group" "rds" {
-  name        = "ai-interview-rds"
+  name        = "${local.name}-rds"
   description = "PostgreSQL from EKS nodes only"
   vpc_id      = aws_vpc.my-vpc.id
 
@@ -37,19 +29,19 @@ resource "random_password" "db" {
   special = false
 }
 
-# 16.14 is the newest 16.x orderable for db.t4g.micro in ap-south-1.
 resource "aws_db_instance" "main" {
-  identifier     = "ai-interview-postgres"
-  instance_class = "db.t4g.micro"
+  identifier     = "${local.name}-postgres"
+  instance_class = var.db_instance_class
   engine         = "postgres"
-  engine_version = "16.14"
+  engine_version = var.db_engine_version
 
-  allocated_storage = 20
+  allocated_storage = var.db_allocated_storage
   storage_encrypted = true
 
-  # Must match middleware/.env.example — Flyway runs as this user on this database.
-  db_name  = "ai_interview"
-  username = "ai_interview_app"
+  # Underscores, not hyphens: PostgreSQL rejects a hyphen in an unquoted database
+  # or role name.
+  db_name  = replace(var.project, "-", "_")
+  username = "${replace(var.project, "-", "_")}_app"
   password = random_password.db.result
 
   db_subnet_group_name   = aws_db_subnet_group.main.name
@@ -58,27 +50,31 @@ resource "aws_db_instance" "main" {
   # The line that keeps it off the internet.
   publicly_accessible = false
 
-  # Demo database: no backups, no snapshot on delete, destroyable in one command.
-  backup_retention_period = 0
-  skip_final_snapshot     = true
-  deletion_protection     = false
-}
+  # All three off in dev, all three on in prod.
+  backup_retention_period = var.db_backup_retention_days
+  skip_final_snapshot     = var.db_skip_final_snapshot
+  deletion_protection     = var.db_deletion_protection
 
-# -----------------------------------------------------------------------------
-# Outputs
-# -----------------------------------------------------------------------------
+  # Timestamped: AWS keeps final snapshots and rejects a duplicate name, so a
+  # second destroy would fail on the name the first one used.
+  final_snapshot_identifier = var.db_skip_final_snapshot ? null : "${local.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+
+  lifecycle {
+    # timestamp() changes every plan; without this every plan shows a diff.
+    ignore_changes = [final_snapshot_identifier]
+  }
+}
 
 output "rds_endpoint" {
   value = aws_db_instance.main.address
 }
 
-# Read with: terraform output -raw db_password
 output "db_password" {
   value     = random_password.db.result
   sensitive = true
 }
 
-# Must run from inside the cluster — the instance has no public address.
+# Must run inside the cluster - the instance has no public address.
 output "psql_check" {
   value = <<-EOT
     kubectl run pgcheck --rm -it --restart=Never --image=postgres:16-alpine \
