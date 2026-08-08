@@ -79,8 +79,9 @@ updates:
 
   # Base images are pinned on purpose. A bump here changes the JDK, Node or
   # Python the app runs on, so it is a deliberate decision, not a chore.
-  # Trivy in security.yml still fails the build on a fixable CRITICAL, which is
-  # what actually forces a base image forward.
+  # What actually forces a base image forward is the Trivy image scan in each
+  # deploy workflow, which fails on a fixable CRITICAL. The filesystem scan in
+  # security.yml is exit-code 0 and only reports.
   - package-ecosystem: docker
     directories:
       - /middleware
