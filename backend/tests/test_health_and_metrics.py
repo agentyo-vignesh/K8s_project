@@ -53,6 +53,23 @@ class TestMetrics:
         assert response.status_code == 200
         assert "http_requests_total" in response.text
 
+    def test_content_type_matches_the_body_format(self, client: TestClient) -> None:
+        """Prometheus picks its parser from the header, not from the body.
+
+        This shipped broken once: the plain-text serialiser paired with the OpenMetrics content
+        type. Nothing visible from outside was wrong - 200, correct metrics - and Prometheus
+        marked the target DOWN with `data does not end with # EOF`, an error that never mentions
+        the header that caused it. Only OpenMetrics writes that terminator.
+        """
+        response = client.get("/metrics")
+        content_type = response.headers["content-type"]
+
+        if "openmetrics" in content_type:
+            assert response.text.endswith("# EOF\n"), "openmetrics content type without # EOF"
+        else:
+            assert content_type.startswith("text/plain"), content_type
+            assert not response.text.endswith("# EOF\n"), "text/plain must not end with # EOF"
+
     def test_records_generation_metrics(self, client: TestClient) -> None:
         client.post(
             "/api/v1/questions/generate",

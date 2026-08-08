@@ -8,8 +8,14 @@ Prometheus down.
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
-from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST as OPENMETRICS_CONTENT_TYPE
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 # A dedicated registry rather than the global default: it keeps test runs isolated and makes it
 # impossible for an imported library to silently add series to this service's exposition.
@@ -76,8 +82,16 @@ DATABASE_ERRORS_TOTAL = Counter(
 
 
 def render_metrics() -> tuple[bytes, str]:
-    """Serialises the registry for the `/metrics` endpoint."""
-    return generate_latest(REGISTRY), OPENMETRICS_CONTENT_TYPE
+    """Serialises the registry for the `/metrics` endpoint.
+
+    The content type must match what `generate_latest` actually produced. This previously paired the
+    plain-text serialiser with the OpenMetrics content type, and the mismatch is invisible from the
+    outside: the endpoint answers 200 with correct-looking metrics, and Prometheus - trusting the
+    header - runs its OpenMetrics parser, which requires a trailing `# EOF` the plain-text format
+    never writes. The target goes DOWN with `data does not end with # EOF` and no mention of the
+    header that caused it.
+    """
+    return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
 
 
 def status_class(status_code: int) -> str:
