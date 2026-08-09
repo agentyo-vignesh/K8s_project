@@ -89,7 +89,7 @@ export function LoginPage() {
               AI Interview Platform
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Come in to continue with the interview.
+              Login in to continue with the interview.
             </Typography>
           </Stack>
 
