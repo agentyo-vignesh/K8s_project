@@ -112,7 +112,7 @@ exercises for each of these.
 
 **Correlation across services.** Every response carries `X-Request-Id`; both
 services emit it as a top-level JSON log field, so one id spans both services'
-logs in Loki.
+logs. Nothing collects them yet - `kubectl logs` and grep, for now.
 
 ## Repository layout
 
@@ -122,7 +122,7 @@ middleware/   Spring Boot API (owns schema)   + middleware/.env
 backend/      FastAPI AI service              + backend/.env
 database/     Container bootstrap only        + database/.env
 helm/         one chart per service, plus platform/ for the shared pieces
-terraform/    all AWS infrastructure, applied in one command
+terraform/    global/, modules/platform/, environments/dev|prod/
 .github/      CI, CD, security scanning, Dependabot
 docs/         Architecture, API, setup, deployment, troubleshooting
 scripts/      dev-up, dev-down, build, smoke-test, check-env, secrets
@@ -142,9 +142,9 @@ Every component builds and its checks pass on a clean checkout:
 | Component | Command | Result |
 |---|---|---|
 | Middleware | `mvn -B verify` | 70 tests pass, jar built |
-| AI service | `pytest` / `ruff` / `mypy` | 75 tests pass, lint and types clean |
-| Frontend | `npm run lint` / `test` / `build` | 19 tests pass, lint clean, bundle built |
-| Helm | `helm lint` + `helm template` | Clean for default, dev and prod values |
+| AI service | `pytest` / `ruff` / `mypy` | 76 tests pass, lint and types clean |
+| Frontend | `npm run lint` / `test` / `build` | 20 tests pass, lint clean, bundle built |
+| Helm | `helm lint` + `helm template` | Clean for all five charts |
 | Compose | `docker compose up` + `scripts/smoke-test.sh` | 4/4 containers healthy, **20/20 smoke tests pass** |
 
 The smoke test exercises the real chain — login → candidate CRUD → interview →
@@ -169,7 +169,7 @@ That matters most for the middleware: its rollout is `Recreate`, so an
 unnecessary redeploy costs about 40 seconds of API downtime.
 
 **These pipelines deploy application code, not infrastructure.** Terraform is
-run by hand - see [terraform/README.md](terraform/README.md). A CI job could
+run by hand - see [docs/TERRAFORM.md](docs/TERRAFORM.md). A CI job could
 run `fmt -check` and `validate`, but without AWS credentials it cannot run
 `plan`, so it would never answer the question that matters: what does this
 change destroy? `terraform plan` answers that, locally, before you apply.
@@ -210,7 +210,7 @@ namespace. Each pod reads Secrets Manager itself over IRSA, so `imageTag` and
 `aws.roleArn` are the only values a deploy supplies — and neither has a default,
 because both once had one and both failed silently.
 
-Details: [terraform/README.md](terraform/README.md) and [CLAUDE.md](CLAUDE.md).
+Details: [docs/TERRAFORM.md](docs/TERRAFORM.md) and [CLAUDE.md](CLAUDE.md).
 
 ## Documentation
 
@@ -224,7 +224,9 @@ Details: [terraform/README.md](terraform/README.md) and [CLAUDE.md](CLAUDE.md).
 | [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Layering rules, testing, conventions |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Failure modes and deliberate exercises |
 | [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md) | Every directory and why |
-| [terraform/README.md](terraform/README.md) | The three roots, and exactly what an environment creates |
+| [DATABASE.md](docs/DATABASE.md) | Schema ownership, migrations, connecting |
+| **[STUDENT-SETUP.md](docs/STUDENT-SETUP.md)** | **Fork it and run it on your own AWS account — five lines and one secret** |
+| [TERRAFORM.md](docs/TERRAFORM.md) | The three roots, and exactly what an environment creates |
 
 ## Security notes
 

@@ -47,7 +47,7 @@ they encode are the reason a plain `terraform apply` / `destroy` pair fails.
 | | Build / test | Lint | Single test |
 |---|---|---|---|
 | `middleware/` | `mvn -B verify` (70 tests + JaCoCo) | — | `mvn test -Dtest=JwtServiceTest#refreshTokenRejectedAsAccessToken` |
-| `backend/` | `pytest` (75 tests, SQLite) | `ruff check . && mypy app` | `pytest tests/test_schema_parity.py::TestSchemaParity` |
+| `backend/` | `pytest` (76 tests, SQLite) | `ruff check . && mypy app` | `pytest tests/test_schema_parity.py::TestSchemaParity` |
 | `frontend/` | `npm run test -- --run` (20 Vitest) | `npm run lint` (`--max-warnings 0`) | `npx vitest run src/<path>.test.jsx` |
 
 Requires JDK 21 and Maven on PATH — there is no Maven wrapper.
@@ -218,7 +218,7 @@ about what "normal" is. A variable now either has a default nobody overrides, or
 
 **The load balancer controller is not in Terraform.** Its IAM role comes from
 `eksctl create iamserviceaccount`, which builds a CloudFormation stack, and the controller itself from
-`helm install` into `kube-system`. So `terraform destroy` leaves both behind — see `terraform/README.md`.
+`helm install` into `kube-system`. So `terraform destroy` leaves both behind — see `docs/TERRAFORM.md`.
 
 ### Secrets never become a Kubernetes Secret
 

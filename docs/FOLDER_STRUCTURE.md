@@ -7,7 +7,7 @@ ai-interview-platform/
 ├── backend/           FastAPI AI service   + .env.example
 ├── database/          Container bootstrap  + .env.example   (DDL lives in middleware/)
 ├── helm/              Helm chart
-├── terraform/         all AWS infrastructure, 7 numbered files
+├── terraform/         global/, modules/platform/, environments/dev|prod/
 ├── .github/           CI/CD, Dependabot, PR template
 ├── docs/              This documentation
 ├── scripts/           Development and operational scripts
@@ -162,8 +162,9 @@ OpenAI is one environment variable.
 
 ```
 database/
-├── init/01-init-database.sql   Roles, grants, database settings
-└── README.md                   Ownership, conventions, connecting
+└── init/01-init-database.sql   Roles, grants, database settings
+
+Ownership and conventions: [DATABASE.md](DATABASE.md).
 ```
 
 Deliberately thin. It creates **no application tables** — Flyway in the middleware
@@ -182,7 +183,7 @@ chart in a sitting, and deploying one service cannot disturb another.
 helm/
 ├── platform/       StorageClass (gp3, default) + the ALB Ingress
 ├── observability/  our two ServiceMonitors, plus upstream/ - values for the
-│                   Prometheus, Loki and Alloy charts
+│                   Prometheus chart
 ├── frontend/       configmap, deployment + service
 ├── middleware/     configmap, deployment + service, pvc, serviceaccount
 └── ai-service/     configmap, deployment + service, serviceaccount, hpa
@@ -207,7 +208,7 @@ without them. Both were previously defaulted and both failed silently.
 ## `terraform/`
 
 Three roots. One environment is 52 resources. Full detail in
-[`../terraform/README.md`](../terraform/README.md).
+[`TERRAFORM.md`](TERRAFORM.md).
 
 ```
 terraform/

@@ -96,7 +96,7 @@ everywhere. Nothing secret is ever logged — the credential records override
 | Component | Command | What it runs |
 |---|---|---|
 | Middleware | `mvn verify` | 70 JUnit 5 + Mockito tests, JaCoCo coverage |
-| AI service | `pytest` | 75 tests against in-memory SQLite |
+| AI service | `pytest` | 76 tests against in-memory SQLite |
 | Frontend | `npm run test -- --run` | Vitest |
 
 ### What to test

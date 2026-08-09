@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nginx-sa
+  namespace: demo
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::043083733056:role/nginx-s3-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: nginx}
+  template:
+    metadata:
+      labels: {app: nginx}
+    spec:
+      serviceAccountName: nginx-sa
+      volumes:
+        - name: html
+          emptyDir: {}
+      initContainers:
+        - name: fetch
+          image: amazon/aws-cli:latest
+          command:
+            - sh
+            - -c
+            - aws sts get-caller-identity && aws s3 cp s3://ai-automation-demo-043083733056/index.html /html/index.html
+          volumeMounts:
+            - {name: html, mountPath: /html}
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - {containerPort: 80, name: http}
+          volumeMounts:
+            - {name: html, mountPath: /usr/share/nginx/html}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  selector: {app: nginx}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx
+  namespace: demo
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: nginx, port: {number: 80}}

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      serviceAccountName: web-sa
+      volumes:
+        - name: html
+          emptyDir: {}
+      initContainers:
+        - name: fetch
+          image: amazon/aws-cli:latest
+          command:
+            - sh
+            - -c
+            - aws sts get-caller-identity && aws s3 cp s3://<BUCKET>/index.html /html/index.html
+          volumeMounts:
+            - name: html
+              mountPath: /html
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http

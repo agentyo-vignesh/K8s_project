@@ -6,7 +6,7 @@ PostgreSQL 16. One database, `ai_interview`, shared by two services.
 
 | Concern | Owner | Location |
 |---|---|---|
-| Container bootstrap (roles, grants, database settings) | postgres image entrypoint | [`init/01-init-database.sql`](init/01-init-database.sql) |
+| Container bootstrap (roles, grants, database settings) | postgres image entrypoint | [`../database/init/01-init-database.sql`](../database/init/01-init-database.sql) |
 | All DDL and seed data | **Flyway, run by the middleware** | [`../middleware/src/main/resources/db/migration/`](../middleware/src/main/resources/db/migration/) |
 | `users`, `candidates`, `resumes`, `interviews`, `interview_questions`, `interview_results`, `revoked_tokens` | middleware (JPA) | `V1`, `V3` |
 | `ai_question_sets`, `ai_generated_questions`, `ai_evaluations` | AI service (SQLAlchemy) | `V2` |

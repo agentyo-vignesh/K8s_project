@@ -215,7 +215,7 @@ hardcoded host. Override with `VITE_DEV_API_TARGET`.
 
 ```bash
 cd middleware && mvn verify                       # 70 tests
-cd backend && pytest && ruff check . && mypy app  # 75 tests
+cd backend && pytest && ruff check . && mypy app  # 76 tests
 cd frontend && npm run lint && npm run test -- --run && npm run build
 ```
 

@@ -1,0 +1,41 @@
+name: OIDC Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1        # cluster ap-south-1 la irukku, us-west-2 illa
+  CLUSTER: ai-interview
+  NS: demo
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::043083733056:role/My-Role
+          role-session-name: gh-oidc-test
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Who am I
+        run: aws sts get-caller-identity
+
+      - name: Setup kubeconfig
+        run: |
+          # idhu illaina kubectl ku cluster endpoint theriyaadhu
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+
+      - name: What am I allowed to do
+        run: |
+          kubectl auth whoami                    # k8s ku enna identity-a theriyum
+          kubectl auth can-i --list -n "$NS"
+
+      - name: Allowed - should pass
+        run: kubectl get pods -n "$NS"
