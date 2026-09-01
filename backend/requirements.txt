@@ -10,7 +10,7 @@ pydantic==2.10.6
 pydantic-settings==2.7.1
 
 # Persistence. psycopg 3 is the current driver; SQLAlchemy 2.x style only.
-SQLAlchemy==2.0.51
+SQLAlchemy==2.0.52
 psycopg[binary]==3.2.13
 
 # AWS Secrets Manager. Credentials always come from the default provider chain,
