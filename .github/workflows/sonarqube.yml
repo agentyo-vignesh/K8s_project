@@ -89,7 +89,7 @@ jobs:
           npm run test:coverage
 
       - name: Scan
-        uses: SonarSource/sonarqube-scan-action@v8.2.1
+        uses: SonarSource/sonarqube-scan-action@v8.2.2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           # Self-hosting later is only a change to this line.
